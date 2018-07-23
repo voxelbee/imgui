@@ -220,6 +220,111 @@ void ImGui::ShowUserGuide()
 }
 
 //-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
+
+static void GetVtxIdxDelta(ImDrawList* dl, int* vtx, int *idx)
+{
+    static int vtx_n, idx_n;
+    static int vtx_o, idx_o;
+    vtx_n = dl->VtxBuffer.Size;
+    idx_n = dl->IdxBuffer.Size;
+
+    *vtx = vtx_n - vtx_o;
+    *idx = idx_n - idx_o;
+
+    vtx_o = vtx_n;
+    idx_o = idx_n;
+}
+
+static void TestTextureBasedRender()
+{
+    ImGuiIO& io = ImGui::GetIO();
+
+    ImGui::TextUnformatted("Press SHIFT to toggle quads (hold to see them).");
+    ImGui::TextUnformatted(io.KeyShift ? "SHIFT ON  -- Rasterized quad circle! w00t! OPTIMIZATION!"
+        : "SHIFT OFF -- Regular, boring circle with PathArcToFast.");
+
+    static float radius = io.Fonts->RoundCornersMaxSize * 0.5f;
+    ImGui::SliderFloat("radius", &radius, 0.0f, (float)io.Fonts->RoundCornersMaxSize, "%.0f");
+    ImGui::BeginGroup();
+
+    static int segments = 20;
+    ImGui::PushItemWidth(120);
+    ImGui::SliderInt("segments", &segments, 3, 100);
+    ImGui::PopItemWidth();
+
+    int vtx = 0;
+    int idx = 0;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    {
+        ImGui::Button("##1", ImVec2(200, 200));
+        GetVtxIdxDelta(dl, &vtx, &idx);
+        ImVec2 min = ImGui::GetItemRectMin();
+        ImVec2 size = ImGui::GetItemRectSize();
+        dl->AddCircleFilled(ImVec2(min.x + size.x * 0.5f, min.y + size.y * 0.5f), radius, 0xFFFF00FF, segments);
+        GetVtxIdxDelta(dl, &vtx, &idx);
+        ImGui::Text("AddCircleFilled\n %d vtx, %d idx", vtx, idx);
+    }
+    {
+        ImGui::Button("##2", ImVec2(200, 200));
+        GetVtxIdxDelta(dl, &vtx, &idx);
+        ImVec2 min = ImGui::GetItemRectMin();
+        ImVec2 size = ImGui::GetItemRectSize();
+        dl->AddCircle(ImVec2(min.x + size.x * 0.5f, min.y + size.y * 0.5f), radius, 0xFFFF00FF, segments);
+        GetVtxIdxDelta(dl, &vtx, &idx);
+        ImGui::Text("AddCircle\n %d vtx, %d idx", vtx, idx);
+    }
+    ImGui::EndGroup();
+
+    ImGui::SameLine();
+
+    ImGui::BeginGroup();
+    static bool tl = true, tr = true, bl = true, br = true;
+    int flags = 0;
+    ImGui::Checkbox("TL", &tl);
+    ImGui::SameLine(0, 12);
+    ImGui::Checkbox("TR", &tr);
+    ImGui::SameLine(0, 12);
+    ImGui::Checkbox("BL", &bl);
+    ImGui::SameLine(0, 12);
+    ImGui::Checkbox("BR", &br);
+
+    flags |= tl ? ImDrawCornerFlags_TopLeft : 0;
+    flags |= tr ? ImDrawCornerFlags_TopRight : 0;
+    flags |= bl ? ImDrawCornerFlags_BotLeft : 0;
+    flags |= br ? ImDrawCornerFlags_BotRight : 0;
+
+    {
+        ImGui::Button("", ImVec2(200, 200));
+        ImVec2 r_min = ImGui::GetItemRectMin();
+        ImVec2 r_max = ImGui::GetItemRectMax();
+
+        GetVtxIdxDelta(dl, &vtx, &idx);
+        dl->AddRectFilled(r_min, r_max, 0xFFFF00FF, radius, flags);
+        GetVtxIdxDelta(dl, &vtx, &idx);
+        ImGui::Text("AddRectFilled\n %d vtx, %d idx", vtx, idx);
+    }
+    {
+        ImGui::Button("", ImVec2(200, 200));
+        ImVec2 r_min = ImGui::GetItemRectMin();
+        ImVec2 r_max = ImGui::GetItemRectMax();
+
+        GetVtxIdxDelta(dl, &vtx, &idx);
+        dl->AddRect(r_min, r_max, 0xFFFF00FF, radius, flags);
+        GetVtxIdxDelta(dl, &vtx, &idx);
+        ImGui::Text("AddRect\n %d vtx, %d idx", vtx, idx);
+    }
+
+    ImGui::EndGroup();
+
+    ImGui::Separator();
+
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    ImGui::Image(atlas->TexID, ImVec2((float)atlas->TexWidth, (float)atlas->TexHeight), ImVec2(0, 0), ImVec2(1, 1), ImColor(255, 255, 255, 255), ImColor(255, 255, 255, 128));
+}
+
+//-----------------------------------------------------------------------------
 // [SECTION] Demo Window / ShowDemoWindow()
 //-----------------------------------------------------------------------------
 // - ShowDemoWindowWidgets()
@@ -371,6 +476,8 @@ void ImGui::ShowDemoWindow(bool* p_open)
 
     ImGui::Text("dear imgui says hello. (%s)", IMGUI_VERSION);
     ImGui::Spacing();
+
+    TestTextureBasedRender();
 
     if (ImGui::CollapsingHeader("Help"))
     {

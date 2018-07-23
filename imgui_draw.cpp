@@ -1135,12 +1135,190 @@ void ImDrawList::AddLine(const ImVec2& p1, const ImVec2& p2, ImU32 col, float th
     PathStroke(col, false, thickness);
 }
 
+inline void AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImVec2& b, ImU32 col, float rounding, int rounding_corners_flags, bool fill)
+{
+    const ImDrawListSharedData* data = draw_list->_Data;
+    const int rad = (int)rounding;
+    IM_ASSERT(rad <= data->Font->ContainerAtlas->RoundCornersMaxSize);
+
+    ImTextureID tex_id = data->Font->ContainerAtlas->TexID;
+    IM_ASSERT(tex_id == draw_list->_TextureIdStack.back());  // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
+
+    const ImVec4& uvs = (*(fill ? data->TexUvRoundCornerFilled : data->TexUvRoundCornerStroked))[rad - 1];
+    const ImVec2 corner_uv[3] =
+    {
+        ImVec2(uvs.x, uvs.y),
+        fill ? ImVec2(uvs.x, uvs.w) : ImVec2(uvs.z, uvs.y),
+        ImVec2(uvs.z, uvs.w),
+    };
+
+    const bool ba = (rounding_corners_flags & ImDrawCornerFlags_TopLeft) != 0;
+    const bool bb = (rounding_corners_flags & ImDrawCornerFlags_TopRight) != 0;
+    const bool bc = (rounding_corners_flags & ImDrawCornerFlags_BotRight) != 0;
+    const bool bd = (rounding_corners_flags & ImDrawCornerFlags_BotLeft) != 0;
+
+    // TODO: fix "D" shaped stroked rects
+
+    const int rad_l = (ba || bd) ? rad : 0;
+    const int rad_t = (ba || bb) ? rad : 0;
+    const int rad_r = (bc || bb) ? rad : 0;
+    const int rad_b = (bc || bd) ? rad : 0;
+
+    const ImVec2 ca(a.x, a.y), cb(b.x, a.y);
+    const ImVec2 ma1(ca.x + rad_l, ca.y), mb1(cb.x - rad_r, cb.y);
+    const ImVec2 ma2(ca.x, ca.y + rad_t), mb2(cb.x, cb.y + rad_t);
+    const ImVec2 ia(ma1.x, ma2.y), ib(mb1.x, mb2.y);
+
+    const ImVec2 cc(b.x, b.y), cd(a.x, b.y);
+    const ImVec2 md3(cd.x, cd.y - rad_b), mc3(cc.x, cc.y - rad_b);
+    const ImVec2 md4(cd.x + rad_l, cd.y), mc4(cc.x - rad_r, cc.y);
+    const ImVec2 id(md4.x, md3.y), ic(mc4.x, mc3.y);
+
+    const int vtcs = 16;
+    const int idcs = 54;
+    draw_list->PrimReserve(idcs, vtcs);
+
+    const ImDrawIdx idx = (ImDrawIdx)draw_list->_VtxCurrentIdx;
+
+    #define VTX_WRITE(d, p, i)                          \
+        draw_list->_VtxWritePtr[d].pos = (p);           \
+        draw_list->_VtxWritePtr[d].uv = corner_uv[(i)]; \
+        draw_list->_VtxWritePtr[d].col = col
+
+    const int vca = 0, vcb = 1, vcc = 2, vcd = 3;
+    VTX_WRITE(vca, ca, ba ? 2 : 1);
+    VTX_WRITE(vcb, cb, bb ? 2 : 1);
+    VTX_WRITE(vcc, cc, bc ? 2 : 1);
+    VTX_WRITE(vcd, cd, bd ? 2 : 1);
+
+    int dv = 4;
+
+    int vya = vca, vxa = vca, via = vca;
+    int vyb = vcb, vxb = vcb, vib = vcb;
+    int vyc = vcc, vxc = vcc, vic = vcc;
+    int vyd = vcd, vxd = vcd, vid = vcd;
+
+    // FIXME-ROUND_SHAPES: TODO: find a way of saving vertices/triangles here?
+    // currently it's the same cost regardless of how many corners are rounded
+
+    if (ba || 1)
+    {
+        vya = dv;
+        vxa = dv + 1;
+        via = dv + 2;
+        VTX_WRITE(vya, ma1, 1);
+        VTX_WRITE(vxa, ma2, 1);
+        VTX_WRITE(via, ia, 0);
+        dv += 3;
+    }
+
+    if (bb || 1) 
+    {
+        vyb = dv;
+        vxb = dv + 1;
+        vib = dv + 2;
+        VTX_WRITE(vyb, mb1, 1);
+        VTX_WRITE(vxb, mb2, 1);
+        VTX_WRITE(vib, ib, 0);
+        dv += 3;
+    }
+
+    if (bc || 1) 
+    {
+        vyc = dv;
+        vxc = dv + 1;
+        vic = dv + 2;
+        VTX_WRITE(vyc, mc4, 1);
+        VTX_WRITE(vxc, mc3, 1);
+        VTX_WRITE(vic, ic, 0);
+        dv += 3;
+    }
+
+    if (bd || 1)
+    {
+        vyd = dv;
+        vxd = dv + 1;
+        vid = dv + 2;
+        VTX_WRITE(vyd, md4, 1);
+        VTX_WRITE(vxd, md3, 1);
+        VTX_WRITE(vid, id, 0);
+        dv += 3;
+    }
+
+    int di = 0;
+    #define IDX_WRITE_TRI(idx0, idx1, idx2)                      \
+        draw_list->_IdxWritePtr[di]   = (ImDrawIdx)(idx+(idx0)); \
+        draw_list->_IdxWritePtr[di+1] = (ImDrawIdx)(idx+(idx1)); \
+        draw_list->_IdxWritePtr[di+2] = (ImDrawIdx)(idx+(idx2)); \
+        di += 3
+
+    // Inner
+    if (fill)
+    {
+      IDX_WRITE_TRI(via, vic, vib);
+      IDX_WRITE_TRI(via, vic, vid);
+    }
+
+    if (ba || 1)
+    {
+        IDX_WRITE_TRI(vca, vya, via);
+        IDX_WRITE_TRI(vca, vxa, via);
+
+        IDX_WRITE_TRI(vib, vya, via);
+        IDX_WRITE_TRI(vid, vxa, via);
+    }
+
+    if (bb || 1)
+    {
+        IDX_WRITE_TRI(vcb, vyb, vib);
+        IDX_WRITE_TRI(vcb, vxb, vib);
+
+        IDX_WRITE_TRI(vya, vyb, vib);
+        IDX_WRITE_TRI(vic, vxb, vib);
+    }
+
+    if (bc || 1)
+    {
+        IDX_WRITE_TRI(vcc, vyc, vic);
+        IDX_WRITE_TRI(vcc, vxc, vic);
+
+        IDX_WRITE_TRI(vxb, vxc, vic);
+        IDX_WRITE_TRI(vyd, vyc, vic);
+    }
+
+    if (bd || 1)
+    {
+        IDX_WRITE_TRI(vcd, vyd, vid);
+        IDX_WRITE_TRI(vcd, vxd, vid);
+
+        IDX_WRITE_TRI(vic, vyd, vid);
+        IDX_WRITE_TRI(vxa, vxd, vid);
+    }
+
+    draw_list->_VtxWritePtr += dv;
+    draw_list->_VtxCurrentIdx += dv;
+    draw_list->_IdxWritePtr += di;
+
+    draw_list->PrimReserve(di - idcs, dv - vtcs);   // FIXME-OPT
+
+    #undef IDX_WRITE_TRI
+    #undef VTX_WRITE
+}
+
 // p_min = upper-left, p_max = lower-right
 // Note we don't render 1 pixels sized rectangles properly.
 void ImDrawList::AddRect(const ImVec2& p_min, const ImVec2& p_max, ImU32 col, float rounding, ImDrawCornerFlags rounding_corners, float thickness)
 {
     if ((col & IM_COL32_A_MASK) == 0)
         return;
+
+    rounding = ImMin(rounding, ImFabs(p_max.x - p_min.x) * (((rounding_corners & ImDrawCornerFlags_Top) == ImDrawCornerFlags_Top) || ((rounding_corners & ImDrawCornerFlags_Bot) == ImDrawCornerFlags_Bot) ? 0.5f : 1.0f) - 1.0f);
+    rounding = ImMin(rounding, ImFabs(p_max.y - p_min.y) * (((rounding_corners & ImDrawCornerFlags_Left) == ImDrawCornerFlags_Left) || ((rounding_corners & ImDrawCornerFlags_Right) == ImDrawCornerFlags_Right) ? 0.5f : 1.0f) - 1.0f);
+
+    // FIXME-ROUND-SHAPES: NOTE HACK TODO figure out why it's broken on small rounding
+    if (ImGui::GetIO().KeyShift && rounding > 3)
+        return AddRoundCornerRect(this, p_min, p_max, col, rounding, rounding_corners, /* fill */ false);
+
     if (Flags & ImDrawListFlags_AntiAliasedLines)
         PathRect(p_min + ImVec2(0.50f, 0.50f), p_max - ImVec2(0.50f, 0.50f), rounding, rounding_corners);
     else
@@ -1152,10 +1330,23 @@ void ImDrawList::AddRectFilled(const ImVec2& p_min, const ImVec2& p_max, ImU32 c
 {
     if ((col & IM_COL32_A_MASK) == 0)
         return;
-    if (rounding > 0.0f)
+
+    rounding = ImMin(rounding, ImFabs(p_max.x - p_min.x) * ( ((rounding_corners & ImDrawCornerFlags_Top)  == ImDrawCornerFlags_Top)  || ((rounding_corners & ImDrawCornerFlags_Bot)   == ImDrawCornerFlags_Bot)   ? 0.5f : 1.0f ) - 1.0f);
+    rounding = ImMin(rounding, ImFabs(p_max.y - p_min.y) * ( ((rounding_corners & ImDrawCornerFlags_Left) == ImDrawCornerFlags_Left) || ((rounding_corners & ImDrawCornerFlags_Right) == ImDrawCornerFlags_Right) ? 0.5f : 1.0f ) - 1.0f);
+
+    if (rounding > 0.0f && rounding_corners != 0)
     {
-        PathRect(p_min, p_max, rounding, rounding_corners);
-        PathFillConvex(col);
+        // FIXME-ROUND-SHAPES: NOTE HACK TODO figure out why it's broken on small rounding
+        if (ImGui::GetIO().KeyShift && rounding > 3)
+        {
+            AddRoundCornerRect(this, p_min, p_max, col, rounding, rounding_corners, /* fill */ true);
+            return;
+        }
+        else
+        {
+            PathRect(p_min, p_max, rounding, rounding_corners);
+            PathFillConvex(col);
+        }
     }
     else
     {
@@ -1226,10 +1417,84 @@ void ImDrawList::AddTriangleFilled(const ImVec2& p1, const ImVec2& p2, const ImV
     PathFillConvex(col);
 }
 
+inline void AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, float radius, ImU32 col, bool fill)
+{
+    const ImDrawListSharedData* data = draw_list->_Data;
+    ImTextureID tex_id = data->Font->ContainerAtlas->TexID;
+    IM_ASSERT(tex_id == draw_list->_TextureIdStack.back());  // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
+
+    const int rad = (int)radius;
+    IM_ASSERT(rad <= data->Font->ContainerAtlas->RoundCornersMaxSize);
+
+    const ImVec4& uvs = (*(fill ? data->TexUvRoundCornerFilled : data->TexUvRoundCornerStroked))[rad - 1];
+    const ImVec2 corner_uv[3] = 
+    {
+        ImVec2(uvs.x, uvs.y),
+        fill ? ImVec2(uvs.x, uvs.w) : ImVec2(uvs.z, uvs.y),
+        ImVec2(uvs.z, uvs.w),
+    };
+
+    const ImVec2& c = center;
+    ImVec2 tl = ImVec2(c.x - rad, c.y - rad);
+    ImVec2 br = ImVec2(c.x + rad, c.y + rad);
+
+    // NOTE: test performance using locals instead of array
+    const ImVec2 circle_vt[9] = 
+    {
+        c,
+        tl,
+        ImVec2(c.x, tl.y),
+        ImVec2(br.x, tl.y),
+        ImVec2(br.x, c.y),
+        br,
+        ImVec2(c.x, br.y),
+        ImVec2(tl.x, br.y),
+        ImVec2(tl.x, c.y),
+    };
+
+    #define IDX_WRITE_TRI(d, idx0, idx1, idx2)                  \
+        draw_list->_IdxWritePtr[d+0] = (ImDrawIdx)(idx+idx0);   \
+        draw_list->_IdxWritePtr[d+1] = (ImDrawIdx)(idx+idx1);   \
+        draw_list->_IdxWritePtr[d+2] = (ImDrawIdx)(idx+idx2)
+
+    #define VTX_WRITE(d, i)                                     \
+        draw_list->_VtxWritePtr[d].pos = circle_vt[d];          \
+        draw_list->_VtxWritePtr[d].uv = corner_uv[i];           \
+        draw_list->_VtxWritePtr[d].col = col
+
+    draw_list->PrimReserve(24, 9);
+    ImDrawIdx idx = (ImDrawIdx)draw_list->_VtxCurrentIdx;
+    IDX_WRITE_TRI( 0, 0, 1, 2);
+    IDX_WRITE_TRI( 3, 0, 3, 2);
+    IDX_WRITE_TRI( 6, 0, 3, 4);
+    IDX_WRITE_TRI( 9, 0, 5, 4);
+    IDX_WRITE_TRI(12, 0, 5, 6);
+    IDX_WRITE_TRI(15, 0, 7, 6);
+    IDX_WRITE_TRI(18, 0, 7, 8);
+    IDX_WRITE_TRI(21, 0, 1, 8);
+
+    VTX_WRITE(1, 2); VTX_WRITE(2, 1); VTX_WRITE(3, 2);
+    VTX_WRITE(8, 1); VTX_WRITE(0, 0); VTX_WRITE(4, 1);
+    VTX_WRITE(7, 2); VTX_WRITE(6, 1); VTX_WRITE(5, 2);
+
+    draw_list->_VtxWritePtr += 9;
+    draw_list->_VtxCurrentIdx += 9;
+    draw_list->_IdxWritePtr += 24;
+
+#undef IDX_WRITE_TRI
+#undef VTX_WRITE
+}
+
 void ImDrawList::AddCircle(const ImVec2& center, float radius, ImU32 col, int num_segments, float thickness)
 {
     if ((col & IM_COL32_A_MASK) == 0 || radius <= 0.0f)
         return;
+
+    if (ImGui::GetIO().KeyShift)
+    {
+        AddRoundCornerCircle(this, center, radius, col, false);
+        return;
+    }
 
     // Obtain segment count
     if (num_segments <= 0)
@@ -1303,6 +1568,12 @@ void ImDrawList::AddNgonFilled(const ImVec2& center, float radius, ImU32 col, in
 {
     if ((col & IM_COL32_A_MASK) == 0 || num_segments <= 2)
         return;
+
+    if (ImGui::GetIO().KeyShift)
+    {
+        AddRoundCornerCircle(this, center, radius, col, true);
+        return;
+    }
 
     // Because we are filling a closed shape we remove 1 from the count of segments/points
     const float a_max = (IM_PI * 2.0f) * ((float)num_segments - 1.0f) / (float)num_segments;
@@ -1743,6 +2014,8 @@ ImFontAtlas::ImFontAtlas()
     TexUvScale = ImVec2(0.0f, 0.0f);
     TexUvWhitePixel = ImVec2(0.0f, 0.0f);
     PackIdMouseCursors = PackIdLines = -1;
+
+    RoundCornersMaxSize = 60;
 }
 
 ImFontAtlas::~ImFontAtlas()
@@ -1771,6 +2044,7 @@ void    ImFontAtlas::ClearInputData()
     ConfigData.clear();
     CustomRects.clear();
     PackIdMouseCursors = PackIdLines = -1;
+    RoundCornersRectIds.clear();
 }
 
 void    ImFontAtlas::ClearTexData()
@@ -1782,6 +2056,8 @@ void    ImFontAtlas::ClearTexData()
         IM_FREE(TexPixelsRGBA32);
     TexPixelsAlpha8 = NULL;
     TexPixelsRGBA32 = NULL;
+    TexUvRoundCornerFilled.clear();
+    TexUvRoundCornerStroked.clear();
 }
 
 void    ImFontAtlas::ClearFonts()
@@ -2444,6 +2720,8 @@ static void ImFontAtlasBuildRenderLinesTexData(ImFontAtlas* atlas)
     }
 }
 
+static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas);
+
 // Note: this is called / shared by both the stb_truetype and the FreeType builder
 void ImFontAtlasBuildInit(ImFontAtlas* atlas)
 {
@@ -2463,6 +2741,93 @@ void ImFontAtlasBuildInit(ImFontAtlas* atlas)
         if (!(atlas->Flags & ImFontAtlasFlags_NoBakedLines))
             atlas->PackIdLines = atlas->AddCustomRectRegular(IM_DRAWLIST_TEX_LINES_WIDTH_MAX + 2, IM_DRAWLIST_TEX_LINES_WIDTH_MAX + 1);
     }
+
+    ImFontAtlasBuildRegisterRoundCornersCustomRects(atlas);
+}
+
+const int          FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING = 2;
+
+static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
+{
+    if (atlas->RoundCornersRectIds.size() > 0)
+        return;
+
+    if ((atlas->Flags & ImFontAtlasFlags_NoBakedRoundCorners))
+        return;
+
+    const int pad = FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING;
+    const int max = atlas->RoundCornersMaxSize;
+
+    // Filled
+    for (int n = 0; n < max; n++)
+        atlas->RoundCornersRectIds.push_back(atlas->AddCustomRectRegular(n + 1 + pad * 2, n + 1 + pad * 2));
+
+    // Stroked
+    for (int n = 0; n < max; n++)
+        atlas->RoundCornersRectIds.push_back(atlas->AddCustomRectRegular(n + 1 + pad * 2, n + 1 + pad * 2));
+}
+
+static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
+{
+    IM_ASSERT(atlas->TexPixelsAlpha8 != NULL);
+    IM_ASSERT(atlas->TexUvRoundCornerFilled.size() == 0);
+    IM_ASSERT(atlas->TexUvRoundCornerStroked.size() == 0);
+
+    if ((atlas->Flags & ImFontAtlasFlags_NoBakedRoundCorners))
+        return;
+
+    const int w = atlas->TexWidth;
+    const unsigned int max = atlas->RoundCornersMaxSize;
+
+    // Filled
+    for (unsigned int stage = 0; stage < 2; stage++)
+    {
+        bool filled = stage == 0;
+        for (unsigned int n = 0; n < max; n++)
+        {
+            const unsigned int id = (filled ? 0 : max) + n;
+            IM_ASSERT(atlas->RoundCornersRectIds.size() > (int) n);
+            ImFontAtlas::CustomRect& r = atlas->CustomRects[atlas->RoundCornersRectIds[id]];
+            IM_ASSERT(r.IsPacked());
+
+            const int pad = FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING;
+
+            IM_ASSERT(r.Width == n + 1 + pad * 2 && r.Height == n + 1 + pad * 2);
+
+            const int radius = (int)(r.Width - pad * 2);
+            const float stroke_width = 1.0f;
+
+            for (int y = -pad; y < (int) (radius); y++)
+                for (int x = (filled ? -pad : y); x < (int)(filled ? y + pad : radius); x++)
+                {
+                    const float dist = ImSqrt((float)(x*x+y*y)) - (float)(radius - (filled ? 0 : stroke_width));
+
+                    float alpha = 0.0f;
+                    if (filled)
+                    {
+                        alpha = ImClamp(-dist, 0.0f, 1.0f);
+                    }
+                    else
+                    {
+                        const float alpha1 = ImClamp(dist + stroke_width, 0.0f, 1.0f);
+                        const float alpha2 = ImClamp(dist, 0.0f, 1.0f);
+                        alpha = alpha1 - alpha2;
+                    }
+
+                    const unsigned int offset = (int)(r.X + pad + x) + (int)(r.Y + pad + y) * w;
+                    atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * ImSaturate(alpha));
+                }
+
+            ImVec2 uv0, uv1;
+            r.X += pad;
+            r.Y += pad;
+            r.Width -= pad * 2;
+            r.Height -= pad * 2;
+            atlas->CalcCustomRectUV(&r, &uv0, &uv1);
+            ImVector<ImVec4>& uvs = (filled ? atlas->TexUvRoundCornerFilled : atlas->TexUvRoundCornerStroked);
+            uvs.push_back(ImVec4(uv0.x, uv0.y, uv1.x, uv1.y));
+        }
+    }
 }
 
 // This is called/shared by both the stb_truetype and the FreeType builder.
@@ -2472,6 +2837,9 @@ void ImFontAtlasBuildFinish(ImFontAtlas* atlas)
     IM_ASSERT(atlas->TexPixelsAlpha8 != NULL);
     ImFontAtlasBuildRenderDefaultTexData(atlas);
     ImFontAtlasBuildRenderLinesTexData(atlas);
+
+    // Render into our rounded corner data block
+    ImFontAtlasBuildRenderRoundCornersTexData(atlas);
 
     // Register custom rectangle glyphs
     for (int i = 0; i < atlas->CustomRects.Size; i++)

@@ -2511,7 +2511,8 @@ enum ImFontAtlasFlags_
     ImFontAtlasFlags_None               = 0,
     ImFontAtlasFlags_NoPowerOfTwoHeight = 1 << 0,   // Don't round the height to next power of two
     ImFontAtlasFlags_NoMouseCursors     = 1 << 1,   // Don't build software mouse cursors into the atlas (save a little texture memory)
-    ImFontAtlasFlags_NoBakedLines       = 1 << 2    // Don't build thick line textures into the atlas (save a little texture memory). The AntiAliasedLinesUseTex features uses them, otherwise they will be rendered using polygons (more expensive for CPU/GPU).
+    ImFontAtlasFlags_NoBakedLines       = 1 << 2,   // Don't build thick line textures into the atlas (save a little texture memory). The AntiAliasedLinesUseTex features uses them, otherwise they will be rendered using polygons (more expensive for CPU/GPU).
+    ImFontAtlasFlags_NoBakedRoundCorners= 1 << 3    // Don't build round corners into the atlas.
 };
 
 // Load and rasterize multiple TTF/OTF fonts into a same texture. The font atlas will build a single texture holding:
@@ -2617,6 +2618,12 @@ struct ImFontAtlas
     // [Internal] Packing data
     int                         PackIdMouseCursors; // Custom texture rectangle ID for white pixel and mouse cursors
     int                         PackIdLines;        // Custom texture rectangle ID for baked anti-aliased lines
+
+    // FIXME-ROUND-SHAPES: WIP
+    int                     RoundCornersMaxSize;    // Max pixel size of round corner textures to generate
+    ImVector<int>           RoundCornersRectIds;    // Ids of custom rects for round corners indexed by size [0] is 1px, [n] is (n+1)px (index up to RoundCornersMaxSize - 1).
+    ImVector<ImVec4>        TexUvRoundCornerFilled; // Texture coordinates to filled round corner quads
+    ImVector<ImVec4>        TexUvRoundCornerStroked;// Texture coordinates to stroked round corner quads
 
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     typedef ImFontAtlasCustomRect    CustomRect;         // OBSOLETED in 1.72+
