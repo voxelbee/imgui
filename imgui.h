@@ -2619,7 +2619,8 @@ struct ImFontAtlas
     int                         PackIdMouseCursors; // Custom texture rectangle ID for white pixel and mouse cursors
     int                         PackIdLines;        // Custom texture rectangle ID for baked anti-aliased lines
 
-    // FIXME-ROUND-SHAPES: WIP
+    // FIXME-ROUNDCORNERS: WIP
+    // FIXME: avoid so many allocations, statically sized buffer removing an indirection may be beneficial here?
     int                     RoundCornersMaxSize;    // Max pixel size of round corner textures to generate
     ImVector<int>           RoundCornersRectIds;    // Ids of custom rects for round corners indexed by size [0] is 1px, [n] is (n+1)px (index up to RoundCornersMaxSize - 1).
     ImVector<ImVec4>        TexUvRoundCornerFilled; // Texture coordinates to filled round corner quads

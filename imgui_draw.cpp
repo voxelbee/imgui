@@ -1198,7 +1198,7 @@ inline void AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImV
     int vyc = vcc, vxc = vcc, vic = vcc;
     int vyd = vcd, vxd = vcd, vid = vcd;
 
-    // FIXME-ROUND_SHAPES: TODO: find a way of saving vertices/triangles here?
+    // FIXME-ROUNDCORNERS: TODO: find a way of saving vertices/triangles here?
     // currently it's the same cost regardless of how many corners are rounded
 
     if (ba || 1)
@@ -1315,7 +1315,7 @@ void ImDrawList::AddRect(const ImVec2& p_min, const ImVec2& p_max, ImU32 col, fl
     rounding = ImMin(rounding, ImFabs(p_max.x - p_min.x) * (((rounding_corners & ImDrawCornerFlags_Top) == ImDrawCornerFlags_Top) || ((rounding_corners & ImDrawCornerFlags_Bot) == ImDrawCornerFlags_Bot) ? 0.5f : 1.0f) - 1.0f);
     rounding = ImMin(rounding, ImFabs(p_max.y - p_min.y) * (((rounding_corners & ImDrawCornerFlags_Left) == ImDrawCornerFlags_Left) || ((rounding_corners & ImDrawCornerFlags_Right) == ImDrawCornerFlags_Right) ? 0.5f : 1.0f) - 1.0f);
 
-    // FIXME-ROUND-SHAPES: NOTE HACK TODO figure out why it's broken on small rounding
+    // FIXME-ROUNDCORNERS: NOTE HACK TODO figure out why it's broken on small rounding
     if (ImGui::GetIO().KeyShift && rounding > 3)
         return AddRoundCornerRect(this, p_min, p_max, col, rounding, rounding_corners, /* fill */ false);
 
@@ -1336,7 +1336,7 @@ void ImDrawList::AddRectFilled(const ImVec2& p_min, const ImVec2& p_max, ImU32 c
 
     if (rounding > 0.0f && rounding_corners != 0)
     {
-        // FIXME-ROUND-SHAPES: NOTE HACK TODO figure out why it's broken on small rounding
+        // FIXME-ROUNDCORNERS: NOTE HACK TODO figure out why it's broken on small rounding
         if (ImGui::GetIO().KeyShift && rounding > 3)
         {
             AddRoundCornerRect(this, p_min, p_max, col, rounding, rounding_corners, /* fill */ true);
@@ -1490,7 +1490,7 @@ void ImDrawList::AddCircle(const ImVec2& center, float radius, ImU32 col, int nu
     if ((col & IM_COL32_A_MASK) == 0 || radius <= 0.0f)
         return;
 
-    if (ImGui::GetIO().KeyShift)
+    if (ImGui::GetIO().KeyShift) // FIXME-ROUNDCORNERS
     {
         AddRoundCornerCircle(this, center, radius, col, false);
         return;
@@ -1569,7 +1569,7 @@ void ImDrawList::AddNgonFilled(const ImVec2& center, float radius, ImU32 col, in
     if ((col & IM_COL32_A_MASK) == 0 || num_segments <= 2)
         return;
 
-    if (ImGui::GetIO().KeyShift)
+    if (ImGui::GetIO().KeyShift) // FIXME-ROUNDCORNERS
     {
         AddRoundCornerCircle(this, center, radius, col, true);
         return;
@@ -2749,9 +2749,8 @@ const int          FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING = 2;
 
 static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
 {
-    if (atlas->RoundCornersRectIds.size() > 0)
+    if (atlas->RoundCornersRectIds.Size > 0)
         return;
-
     if ((atlas->Flags & ImFontAtlasFlags_NoBakedRoundCorners))
         return;
 
@@ -2770,32 +2769,28 @@ static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
 static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
 {
     IM_ASSERT(atlas->TexPixelsAlpha8 != NULL);
-    IM_ASSERT(atlas->TexUvRoundCornerFilled.size() == 0);
-    IM_ASSERT(atlas->TexUvRoundCornerStroked.size() == 0);
-
-    if ((atlas->Flags & ImFontAtlasFlags_NoBakedRoundCorners))
+    IM_ASSERT(atlas->TexUvRoundCornerFilled.Size == 0);
+    IM_ASSERT(atlas->TexUvRoundCornerStroked.Size == 0);
+    if (atlas->Flags & ImFontAtlasFlags_NoBakedRoundCorners)
         return;
 
+    // Render the texture
     const int w = atlas->TexWidth;
     const unsigned int max = atlas->RoundCornersMaxSize;
-
-    // Filled
+    const int pad = FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING;
     for (unsigned int stage = 0; stage < 2; stage++)
     {
-        bool filled = stage == 0;
+        const bool filled = (stage == 0);
         for (unsigned int n = 0; n < max; n++)
         {
             const unsigned int id = (filled ? 0 : max) + n;
-            IM_ASSERT(atlas->RoundCornersRectIds.size() > (int) n);
+            IM_ASSERT(atlas->RoundCornersRectIds.Size > (int)n);
             ImFontAtlas::CustomRect& r = atlas->CustomRects[atlas->RoundCornersRectIds[id]];
             IM_ASSERT(r.IsPacked());
-
-            const int pad = FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING;
-
             IM_ASSERT(r.Width == n + 1 + pad * 2 && r.Height == n + 1 + pad * 2);
 
             const int radius = (int)(r.Width - pad * 2);
-            const float stroke_width = 1.0f;
+            const float stroke_width = 1.0f; // FIXME-ROUNDCORNERS
 
             for (int y = -pad; y < (int) (radius); y++)
                 for (int x = (filled ? -pad : y); x < (int)(filled ? y + pad : radius); x++)
@@ -2805,10 +2800,12 @@ static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
                     float alpha = 0.0f;
                     if (filled)
                     {
+                        // Fill
                         alpha = ImClamp(-dist, 0.0f, 1.0f);
                     }
                     else
                     {
+                        // Stroke
                         const float alpha1 = ImClamp(dist + stroke_width, 0.0f, 1.0f);
                         const float alpha2 = ImClamp(dist, 0.0f, 1.0f);
                         alpha = alpha1 - alpha2;
