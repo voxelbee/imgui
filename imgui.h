@@ -110,6 +110,16 @@ Index of this file:
 #pragma GCC diagnostic ignored "-Wclass-memaccess"          // [__GNUC__ >= 8] warning: 'memset/memcpy' clearing/writing an object of type 'xxxx' with no trivial copy-assignment; use assignment or value-initialization instead
 #endif
 
+// Disable some of MSVC most aggressive runtime checks for library code (pretty much double performances with default "Debug" build settings)
+#if defined(_MSC_VER) && !defined(IMGUI_ENABLE_COMPILER_RUNTIME_CHECKS) && !defined(IMGUI_DEBUG_PARANOID) && 1
+#define IMGUI_COMPILER_RUNTIME_CHECKS_OFF()     __pragma(runtime_checks("",off))     __pragma(check_stack(off)) __pragma(strict_gs_check(push,off))
+#define IMGUI_COMPILER_RUNTIME_CHECKS_ON()      __pragma(runtime_checks("",restore)) __pragma(check_stack())    __pragma(strict_gs_check(pop))
+#else
+#define IMGUI_COMPILER_RUNTIME_CHECKS_OFF()
+#define IMGUI_COMPILER_RUNTIME_CHECKS_ON()
+#endif
+IMGUI_COMPILER_RUNTIME_CHECKS_OFF();
+
 //-----------------------------------------------------------------------------
 // Forward declarations and basic types
 //-----------------------------------------------------------------------------
@@ -241,6 +251,8 @@ struct ImVec4
     IM_VEC4_CLASS_EXTRA     // Define additional constructors and implicit cast operators in imconfig.h to convert back and forth between your math types and ImVec4.
 #endif
 };
+
+IMGUI_COMPILER_RUNTIME_CHECKS_ON();
 
 //-----------------------------------------------------------------------------
 // ImGui: Dear ImGui end-user API

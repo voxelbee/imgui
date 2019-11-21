@@ -53,6 +53,7 @@ Index of this file:
 #pragma warning (disable: 4127) // condition expression is constant
 #pragma warning (disable: 4505) // unreferenced local function has been removed (stb stuff)
 #pragma warning (disable: 4996) // 'This function or variable may be unsafe': strcpy, strdup, sprintf, vsnprintf, sscanf, fopen
+IMGUI_COMPILER_RUNTIME_CHECKS_OFF();
 #endif
 
 // Clang/GCC warnings with -Weverything
@@ -3840,5 +3841,7 @@ static const char* GetDefaultCompressedFontDataTTFBase85()
 {
     return proggy_clean_ttf_compressed_data_base85;
 }
+
+IMGUI_COMPILER_RUNTIME_CHECKS_ON();
 
 #endif // #ifndef IMGUI_DISABLE

@@ -781,6 +781,7 @@ CODE
 #pragma warning (disable: 5054)             // operator '|': deprecated between enumerations of different types
 #endif
 #endif
+IMGUI_COMPILER_RUNTIME_CHECKS_OFF();
 
 // Clang/GCC warnings with -Weverything
 #if defined(__clang__)
@@ -11091,6 +11092,8 @@ void ImGui::DebugNodeWindowSettings(ImGuiWindowSettings*) {}
 void ImGui::DebugNodeWindowsList(ImVector<ImGuiWindow*>*, const char*) {}
 
 #endif
+
+IMGUI_COMPILER_RUNTIME_CHECKS_ON();
 
 //-----------------------------------------------------------------------------
 
