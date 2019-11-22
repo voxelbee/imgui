@@ -1135,174 +1135,522 @@ void ImDrawList::AddLine(const ImVec2& p1, const ImVec2& p2, ImU32 col, float th
     PathStroke(col, false, thickness);
 }
 
-inline void AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImVec2& b, ImU32 col, float rounding, int rounding_corners_flags, bool fill)
+// Add instructions to draw a rectangle with rounded corners to the draw list
+// a is the top-left coordinate of the rectangle, b is the bottom-right
+// rounding_corners_flags should be a mask of values indicating which corners
+// should be drawn rounded
+// Returns true if the rectangle was drawn, false for some reason it couldn't
+// be (in which case the caller should try again with the regular path drawing API)
+inline bool AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImVec2& b, ImU32 col, float rounding, ImDrawCornerFlags rounding_corners_flags, bool fill)
 {
     const ImDrawListSharedData* data = draw_list->_Data;
     const int rad = (int)rounding;
-    IM_ASSERT(rad <= data->Font->ContainerAtlas->RoundCornersMaxSize);
+
+    if ((rad <= 0) || // Zero radius causes issues with the [rad - 1] UV lookup below
+        (rad > data->Font->ContainerAtlas->RoundCornersMaxSize))
+    {
+        // We can't handle this
+        return false;
+    }
+
+    // Debug command to force this render path to only execute when shift is held
+    if (!ImGui::GetIO().KeyShift)
+    {
+        return false;
+    }
 
     ImTextureID tex_id = data->Font->ContainerAtlas->TexID;
     IM_ASSERT(tex_id == draw_list->_TextureIdStack.back());  // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
 
+    // The width of our line for unfilled mode
+    // Something of a placeholder at the moment - used for calculations but without appropriately-generated
+    // textures won't actually achieve anything
+    const float line_width = 1.0f;
+
+    // Calculate UVs for the three points we are interested in from the texture
+    // corner_uv[0] is the innermost point of the circle (solid for filled circles)
+    // corner_uv[1] is either straight down or across from it (depending on if we are using the filled or stroked version)
+    // corner_uv[2] is diagonally across from it
+    // corner_uv[1] is always solid (either inside the circle or on the line), whilst corner_uv[2] is always blank
+    // This represents a 45 degree "wedge" of circle, which then gets mirrored here to produce a 90 degree curve
+    // See ImFontAtlasBuildRenderRoundCornersTexData() for more details of the texture contents
     const ImVec4& uvs = (*(fill ? data->TexUvRoundCornerFilled : data->TexUvRoundCornerStroked))[rad - 1];
     const ImVec2 corner_uv[3] =
     {
         ImVec2(uvs.x, uvs.y),
         fill ? ImVec2(uvs.x, uvs.w) : ImVec2(uvs.z, uvs.y),
-        ImVec2(uvs.z, uvs.w),
+        ImVec2(uvs.z, uvs.w)
     };
 
+    // In this code A-D represent the four corners of the rectangle, going clockwise from the top-left:
+    //
+    // A---B
+    // |   |
+    // D---C
+     
     const bool ba = (rounding_corners_flags & ImDrawCornerFlags_TopLeft) != 0;
     const bool bb = (rounding_corners_flags & ImDrawCornerFlags_TopRight) != 0;
     const bool bc = (rounding_corners_flags & ImDrawCornerFlags_BotRight) != 0;
     const bool bd = (rounding_corners_flags & ImDrawCornerFlags_BotLeft) != 0;
 
-    // TODO: fix "D" shaped stroked rects
+    // The radius of each corner section (0 if it is not rounded)
+    const int rad_a = ba ? rad : 0;
+    const int rad_b = bb ? rad : 0;
+    const int rad_c = bc ? rad : 0;
+    const int rad_d = bd ? rad : 0;
 
-    const int rad_l = (ba || bd) ? rad : 0;
-    const int rad_t = (ba || bb) ? rad : 0;
-    const int rad_r = (bc || bb) ? rad : 0;
-    const int rad_b = (bc || bd) ? rad : 0;
+    // The base vertices for the rectangle
+    //
+    // C are the corner vertices, I the interior ones,
+    // and M the intermediate points on the edge of each
+    // rounded section, as shown below:
+    //
+    // CA--MAY--------MBY--CB
+    // |                    |
+    // MAX  IA--------IB  MBX
+    // |    |          |    |
+    // |    |          |    |
+    // MDX  ID--------IC  MCX
+    // |                    |
+    // CD--MDY--------MCY--CC
+    //
+    // MAX2/MAY2/etc are those vertices offset inwards by the line width
+    // (only used for unfilled rectangles)
 
     const ImVec2 ca(a.x, a.y), cb(b.x, a.y);
-    const ImVec2 ma1(ca.x + rad_l, ca.y), mb1(cb.x - rad_r, cb.y);
-    const ImVec2 ma2(ca.x, ca.y + rad_t), mb2(cb.x, cb.y + rad_t);
-    const ImVec2 ia(ma1.x, ma2.y), ib(mb1.x, mb2.y);
+    const ImVec2 may(ca.x + rad_a, ca.y), mby(cb.x - rad_b, cb.y);
+    const ImVec2 may2(may.x, may.y + line_width), mby2(mby.x, mby.y + line_width);
+    const ImVec2 max(ca.x, ca.y + rad_a), mbx(cb.x, cb.y + rad_b);
+    const ImVec2 max2(max.x + line_width, max.y), mbx2(mbx.x - line_width, mbx.y);
+    const ImVec2 ia(ca.x + rad_a, ca.y + rad_a), ib(cb.x - rad_b, cb.y + rad_b);
 
     const ImVec2 cc(b.x, b.y), cd(a.x, b.y);
-    const ImVec2 md3(cd.x, cd.y - rad_b), mc3(cc.x, cc.y - rad_b);
-    const ImVec2 md4(cd.x + rad_l, cd.y), mc4(cc.x - rad_r, cc.y);
-    const ImVec2 id(md4.x, md3.y), ic(mc4.x, mc3.y);
+    const ImVec2 mdx(cd.x, cd.y - rad_d), mcx(cc.x, cc.y - rad_c);
+    const ImVec2 mdx2(mdx.x + line_width, mdx.y), mcx2(mcx.x - line_width, mcx.y);
+    const ImVec2 mdy(cd.x + rad_d, cd.y), mcy(cc.x - rad_c, cc.y);
+    const ImVec2 mdy2(mdy.x, mdy.y - line_width), mcy2(mcy.x, mcy.y - line_width);
+    const ImVec2 id(cd.x + rad_d, cd.y - rad_d), ic(cc.x - rad_c, cc.y - rad_c);
 
-    const int vtcs = 16;
-    const int idcs = 54;
+    // Generate points CA2-CD2, which are the corner points but inset towards the centre by the line width
+    // These are used as edge line end points when rendering un-rounded corners in non-filled mode
+
+    const ImVec2 ca2(ca.x + line_width, ca.y + line_width), cb2(cb.x - line_width, cb.y + line_width);
+    const ImVec2 cc2(cc.x - line_width, cc.y - line_width), cd2(cd.x + line_width, cd.y - line_width);
+
+    // Reserve enough space for the worse-case vertex/index count
+    // (we give back any left over space later)
+    const int vtcs = 48;
+    const int idcs = 32 * 3;
     draw_list->PrimReserve(idcs, vtcs);
 
     const ImDrawIdx idx = (ImDrawIdx)draw_list->_VtxCurrentIdx;
 
+    // Write a vertex to the draw list, with d being the vertex index,
+    // p the position and i the index into the UV list
     #define VTX_WRITE(d, p, i)                          \
         draw_list->_VtxWritePtr[d].pos = (p);           \
         draw_list->_VtxWritePtr[d].uv = corner_uv[(i)]; \
         draw_list->_VtxWritePtr[d].col = col
 
+    // Write a vertex using an interpolated position and UVs, where
+    // px and py are the parametric position within the corner
+    // (0,0 at the inside, 1,1 at the outside).
+    // "inside" here corresponds to ia/ib/ic/id, whilst "outside" is ca/cb/cc/cd
+    // Corner gives the corner (a/b/c/d) to use
+    // d is the vertex index to write to
+    // The px<py check is necessary because we need to mirror the texture across
+    // the diagonal (as we only have 45 degrees' worth of actual valid pixel data)
+    // This needs to be done the opposite way around for filled vs unfilled as they
+    // each occupy one side of the texture
+    #define VTX_WRITE_LERPED(d, corner, px, py)                                                                                              \
+        draw_list->_VtxWritePtr[d].pos = ImVec2(ImLerp(i##corner.x, c##corner.x, px), ImLerp(i##corner.y, c##corner.y, py));                 \
+        draw_list->_VtxWritePtr[d].uv = ((px < py) ^ fill) ?                                                                                 \
+            ImVec2(ImLerp(corner_uv[0].x, corner_uv[b##corner ? 2 : 1].x, py), ImLerp(corner_uv[0].y, corner_uv[b##corner ? 2 : 1].y, px)) : \
+            ImVec2(ImLerp(corner_uv[0].x, corner_uv[b##corner ? 2 : 1].x, px), ImLerp(corner_uv[0].y, corner_uv[b##corner ? 2 : 1].y, py));  \
+        draw_list->_VtxWritePtr[d].col = col
+
+    // As VTX_WRITE_LERPED, but with the ability to give a custom position that overrides the position lerping
+    // (so effectively we only do the UV calculation)
+    #define VTX_WRITE_LERPED_CUSTOM_POS(d, corner, px, py, custom_pos)                                                                       \
+        draw_list->_VtxWritePtr[d].pos = custom_pos;                                                                                         \
+        draw_list->_VtxWritePtr[d].uv = ((px < py) ^ fill) ?                                                                                 \
+            ImVec2(ImLerp(corner_uv[0].x, corner_uv[b##corner ? 2 : 1].x, py), ImLerp(corner_uv[0].y, corner_uv[b##corner ? 2 : 1].y, px)) : \
+            ImVec2(ImLerp(corner_uv[0].x, corner_uv[b##corner ? 2 : 1].x, px), ImLerp(corner_uv[0].y, corner_uv[b##corner ? 2 : 1].y, py));  \
+        draw_list->_VtxWritePtr[d].col = col
+
+    // Set up the outer corners (vca-vcd being the four outermost
+    // corners)
+    // If the corner is rounded we use the "empty" corner UV, if not we use
+    // the "filled" one
     const int vca = 0, vcb = 1, vcc = 2, vcd = 3;
     VTX_WRITE(vca, ca, ba ? 2 : 1);
     VTX_WRITE(vcb, cb, bb ? 2 : 1);
     VTX_WRITE(vcc, cc, bc ? 2 : 1);
     VTX_WRITE(vcd, cd, bd ? 2 : 1);
+    
+    int dv = 4; // A count of the number of vertices we've written
 
-    int dv = 4;
+    // Set up all the other vertices
+    // Initially they all point to the outside corners, and then
+    // we move them in as required for each rounded corner
+    // VX contains the vertex on the "X side" (i.e. offset in Y) of each corner
+    // VY contains the vertex on the "Y side" (i.e. offset in X) of each corner
+    // VI contains the interior vertex
+    //
+    // This is the layout if all corners are rounded:
+    //
+    // ----VYA--------VYB----
+    // |                    |
+    // VXA  VIA------VIB  VXB
+    // |    |          |    |
+    // |    |          |    |
+    // XVD  VID------VIC  VXC
+    // |                    |
+    // ----VYD--------VYC----
+    //
+    // In addition, for un-filled rectangles VXA2/VYA2/etc will contain the corresponding
+    // vertex offset inwards by the line width
+   
+    int vya = dv;
+    int vxa = dv + 1;
+    int via = dv + 2;
+    int vyb = dv + 3;
+    int vxb = dv + 4;
+    int vib = dv + 5;
+    int vyc = dv + 6;
+    int vxc = dv + 7;
+    int vic = dv + 8;
+    int vyd = dv + 9;
+    int vxd = dv + 10;
+    int vid = dv + 11;
+    VTX_WRITE(vya, may, 1);
+    VTX_WRITE(vxa, max, 1);
+    VTX_WRITE(via, ia, 0);
+    VTX_WRITE(vyb, mby, 1);
+    VTX_WRITE(vxb, mbx, 1);
+    VTX_WRITE(vib, ib, 0);
+    VTX_WRITE(vyc, mcy, 1);
+    VTX_WRITE(vxc, mcx, 1);
+    VTX_WRITE(vic, ic, 0);
+    VTX_WRITE(vyd, mdy, 1);
+    VTX_WRITE(vxd, mdx, 1);
+    VTX_WRITE(vid, id, 0);
+    dv += 12;
 
-    int vya = vca, vxa = vca, via = vca;
-    int vyb = vcb, vxb = vcb, vib = vcb;
-    int vyc = vcc, vxc = vcc, vic = vcc;
-    int vyd = vcd, vxd = vcd, vid = vcd;
+    // The unfilled version needs these vertices for the edges and thin sections at the sides of the rounded corners
+    // If a corner is not rounded then we calculate the UVs as normal (necessary to make the edges work), but
+    // push the actual vertex position up into the corner
 
-    // FIXME-ROUNDCORNERS: TODO: find a way of saving vertices/triangles here?
-    // currently it's the same cost regardless of how many corners are rounded
+    int vya2 = vca, vxa2 = vca;
+    int vyb2 = vcb, vxb2 = vcb;
+    int vyc2 = vcc, vxc2 = vcc;
+    int vyd2 = vcd, vxd2 = vcd;
 
-    if (ba || 1)
+    const float width_offset_parametric = line_width / rad; // Line width in our parametric coordinate space
+
+    if (!fill)
     {
-        vya = dv;
-        vxa = dv + 1;
-        via = dv + 2;
-        VTX_WRITE(vya, ma1, 1);
-        VTX_WRITE(vxa, ma2, 1);
-        VTX_WRITE(via, ia, 0);
-        dv += 3;
+        vya2 = dv;
+        vxa2 = dv + 1;
+        vyb2 = dv + 2;
+        vxb2 = dv + 3;
+        vyc2 = dv + 4;
+        vxc2 = dv + 5;
+        vyd2 = dv + 6;
+        vxd2 = dv + 7;
+
+        if (ba)
+        {
+            VTX_WRITE_LERPED(vxa2, a, 1.0f - width_offset_parametric, 0.0f);
+            VTX_WRITE_LERPED(vya2, a, 0.0f, 1.0f - width_offset_parametric);
+        }
+        else
+        {
+            VTX_WRITE_LERPED_CUSTOM_POS(vxa2, a, 1.0f - width_offset_parametric, 0.0f, ca2);
+            VTX_WRITE_LERPED_CUSTOM_POS(vya2, a, 0.0f, 1.0f - width_offset_parametric, ca2);
+        }
+
+        if (bb)
+        {
+            VTX_WRITE_LERPED(vxb2, b, 1.0f - width_offset_parametric, 0.0f);
+            VTX_WRITE_LERPED(vyb2, b, 0.0f, 1.0f - width_offset_parametric);
+        }
+        else
+        {
+            VTX_WRITE_LERPED_CUSTOM_POS(vxb2, b, 1.0f - width_offset_parametric, 0.0f, cb2);
+            VTX_WRITE_LERPED_CUSTOM_POS(vyb2, b, 0.0f, 1.0f - width_offset_parametric, cb2);
+        }
+
+        if (bc)
+        {
+            VTX_WRITE_LERPED(vxc2, c, 1.0f - width_offset_parametric, 0.0f);
+            VTX_WRITE_LERPED(vyc2, c, 0.0f, 1.0f - width_offset_parametric);
+        }
+        else
+        {
+            VTX_WRITE_LERPED_CUSTOM_POS(vxc2, c, 1.0f - width_offset_parametric, 0.0f, cc2);
+            VTX_WRITE_LERPED_CUSTOM_POS(vyc2, c, 0.0f, 1.0f - width_offset_parametric, cc2);
+        }
+
+        if (bd)
+        {
+            VTX_WRITE_LERPED(vxd2, d, 1.0f - width_offset_parametric, 0.0f);
+            VTX_WRITE_LERPED(vyd2, d, 0.0f, 1.0f - width_offset_parametric);
+        }
+        else
+        {
+            VTX_WRITE_LERPED_CUSTOM_POS(vxd2, d, 1.0f - width_offset_parametric, 0.0f, cd2);
+            VTX_WRITE_LERPED_CUSTOM_POS(vyd2, d, 0.0f, 1.0f - width_offset_parametric, cd2);
+        }
+
+        dv += 8;
     }
 
-    if (bb || 1) 
+    // Extra vertices for clipping the corners
+    // These form points on the inside/outside of the curve
+    //
+    // OC points are the outside of the point in the "middle" of the curve (i.e. at the 45 degree mark)
+    // OI are the inside of the same point (i.e. OC and OI are a line width apart)
+    // OX is the outer point half-way between OC and VX, sufficiently "out" that neither the OC-OX nor VX-OX
+    // lines intersect the curve (i.e. the intersection between the tangent to the curve at the 45 degree point
+    // and the tangent at VX)
+    // OY is the same on the VY side of the curve
+
+    int oxa = vca, oya = vca, oca = vca, oia = vca;
+    int oxb = vcb, oyb = vcb, ocb = vcb, oib = vcb;
+    int oxc = vcc, oyc = vcc, occ = vcc, oic = vcc;
+    int oxd = vcd, oyd = vcd, ocd = vcd, oid = vcd;
+
+    // A couple of useful constants for our calculations
+    const float half_sqrt_two = 0.70710678f; // sqrtf(2.0f) * 0.5f
+    const float sqrt_two_minus_one = 0.41421356f; // sqrt(2.0f) - 1.0f
+    
+    if (ba)
     {
-        vyb = dv;
-        vxb = dv + 1;
-        vib = dv + 2;
-        VTX_WRITE(vyb, mb1, 1);
-        VTX_WRITE(vxb, mb2, 1);
-        VTX_WRITE(vib, ib, 0);
-        dv += 3;
+        oxa = dv;
+        oya = dv + 1;
+        oca = dv + 2;
+        oia = dv + 3;
+        VTX_WRITE_LERPED(oxa, a, 1.0f, sqrt_two_minus_one);
+        VTX_WRITE_LERPED(oya, a, sqrt_two_minus_one, 1.0f);
+        VTX_WRITE_LERPED(oca, a, half_sqrt_two + width_offset_parametric, half_sqrt_two + width_offset_parametric);
+        VTX_WRITE_LERPED(oia, a, half_sqrt_two - width_offset_parametric, half_sqrt_two - width_offset_parametric);
+        dv += 4;
     }
 
-    if (bc || 1) 
+    if (bb)
     {
-        vyc = dv;
-        vxc = dv + 1;
-        vic = dv + 2;
-        VTX_WRITE(vyc, mc4, 1);
-        VTX_WRITE(vxc, mc3, 1);
-        VTX_WRITE(vic, ic, 0);
-        dv += 3;
+        oxb = dv;
+        oyb = dv + 1;
+        ocb = dv + 2;
+        oib = dv + 3;
+        VTX_WRITE_LERPED(oxb, b, 1.0f, sqrt_two_minus_one);
+        VTX_WRITE_LERPED(oyb, b, sqrt_two_minus_one, 1.0f);
+        VTX_WRITE_LERPED(ocb, b, half_sqrt_two + width_offset_parametric, half_sqrt_two + width_offset_parametric);
+        VTX_WRITE_LERPED(oib, b, half_sqrt_two - width_offset_parametric, half_sqrt_two - width_offset_parametric);
+        dv += 4;
     }
 
-    if (bd || 1)
+    if (bc)
     {
-        vyd = dv;
-        vxd = dv + 1;
-        vid = dv + 2;
-        VTX_WRITE(vyd, md4, 1);
-        VTX_WRITE(vxd, md3, 1);
-        VTX_WRITE(vid, id, 0);
-        dv += 3;
+        oxc = dv;
+        oyc = dv + 1;
+        occ = dv + 2;
+        oic = dv + 3;
+        VTX_WRITE_LERPED(oxc, c, 1.0f, sqrt_two_minus_one);
+        VTX_WRITE_LERPED(oyc, c, sqrt_two_minus_one, 1.0f);
+        VTX_WRITE_LERPED(occ, c, half_sqrt_two + width_offset_parametric, half_sqrt_two + width_offset_parametric);
+        VTX_WRITE_LERPED(oic, c, half_sqrt_two - width_offset_parametric, half_sqrt_two - width_offset_parametric);
+        dv += 4;
     }
 
-    int di = 0;
+    if (bd)
+    {
+        oxd = dv;
+        oyd = dv + 1;
+        ocd = dv + 2;
+        oid = dv + 3;
+        VTX_WRITE_LERPED(oxd, d, 1.0f, sqrt_two_minus_one);
+        VTX_WRITE_LERPED(oyd, d, sqrt_two_minus_one, 1.0f);
+        VTX_WRITE_LERPED(ocd, d, half_sqrt_two + width_offset_parametric, half_sqrt_two + width_offset_parametric);
+        VTX_WRITE_LERPED(oid, d, half_sqrt_two - width_offset_parametric, half_sqrt_two - width_offset_parametric);
+        dv += 4;
+    }      
+    
+    // Here we emit the actual triangles
+    
+    int di = 0; // The number of indices we have written
+
+    // Write a triangle using three indices
     #define IDX_WRITE_TRI(idx0, idx1, idx2)                      \
         draw_list->_IdxWritePtr[di]   = (ImDrawIdx)(idx+(idx0)); \
         draw_list->_IdxWritePtr[di+1] = (ImDrawIdx)(idx+(idx1)); \
         draw_list->_IdxWritePtr[di+2] = (ImDrawIdx)(idx+(idx2)); \
         di += 3
 
-    // Inner
+    // Two triangles to fill the inner portion of the rectangle
     if (fill)
     {
-      IDX_WRITE_TRI(via, vic, vib);
-      IDX_WRITE_TRI(via, vic, vid);
-    }
+        // Each corner emits two triangles for the corner itself,
+        // and two triangles that form "wings" attached to the corner
+        // Each wing forms one half of the edge (with the wing from the
+        // adjacent corner forming the other)
 
-    if (ba || 1)
-    {
-        IDX_WRITE_TRI(vca, vya, via);
-        IDX_WRITE_TRI(vca, vxa, via);
+        // Central section
+        IDX_WRITE_TRI(via, vic, vib);
+        IDX_WRITE_TRI(via, vic, vid);
 
+        // Corner
+        if (ba)
+        {
+            IDX_WRITE_TRI(via, vxa, oxa);
+            IDX_WRITE_TRI(via, oxa, oca);
+            IDX_WRITE_TRI(via, oca, oya);
+            IDX_WRITE_TRI(via, oya, vya);
+        }
+        else
+        {
+            IDX_WRITE_TRI(vca, vya, via);
+            IDX_WRITE_TRI(vca, vxa, via);
+        }
+
+        // Edge "wing"
         IDX_WRITE_TRI(vib, vya, via);
         IDX_WRITE_TRI(vid, vxa, via);
-    }
 
-    if (bb || 1)
-    {
-        IDX_WRITE_TRI(vcb, vyb, vib);
-        IDX_WRITE_TRI(vcb, vxb, vib);
+        // Corner
+        if (bb)
+        {
+            IDX_WRITE_TRI(vib, vxb, oxb);
+            IDX_WRITE_TRI(vib, oxb, ocb);
+            IDX_WRITE_TRI(vib, ocb, oyb);
+            IDX_WRITE_TRI(vib, oyb, vyb);
+        }
+        else
+        {
+            IDX_WRITE_TRI(vcb, vyb, vib);
+            IDX_WRITE_TRI(vcb, vxb, vib);
+        }
 
+        // Edge "wing"
         IDX_WRITE_TRI(vya, vyb, vib);
         IDX_WRITE_TRI(vic, vxb, vib);
-    }
 
-    if (bc || 1)
-    {
-        IDX_WRITE_TRI(vcc, vyc, vic);
-        IDX_WRITE_TRI(vcc, vxc, vic);
+        // Corner
+        if (bc)
+        {
+            IDX_WRITE_TRI(vic, vxc, oxc);
+            IDX_WRITE_TRI(vic, oxc, occ);
+            IDX_WRITE_TRI(vic, occ, oyc);
+            IDX_WRITE_TRI(vic, oyc, vyc);
+        }
+        else
+        {
+            IDX_WRITE_TRI(vcc, vyc, vic);
+            IDX_WRITE_TRI(vcc, vxc, vic);
+        }
 
+        // Edge "wing"
         IDX_WRITE_TRI(vxb, vxc, vic);
         IDX_WRITE_TRI(vyd, vyc, vic);
-    }
 
-    if (bd || 1)
-    {
-        IDX_WRITE_TRI(vcd, vyd, vid);
-        IDX_WRITE_TRI(vcd, vxd, vid);
+        // Corner
+        if (bd)
+        {
+            IDX_WRITE_TRI(vid, vxd, oxd);
+            IDX_WRITE_TRI(vid, oxd, ocd);
+            IDX_WRITE_TRI(vid, ocd, oyd);
+            IDX_WRITE_TRI(vid, oyd, vyd);
+        }
+        else
+        {
+            IDX_WRITE_TRI(vcd, vyd, vid);
+            IDX_WRITE_TRI(vcd, vxd, vid);
+        }
 
+        // Edge "wing"
         IDX_WRITE_TRI(vic, vyd, vid);
         IDX_WRITE_TRI(vxa, vxd, vid);
+    }
+    else
+    {
+        // Unfilled version
+
+        // Top edge
+        IDX_WRITE_TRI(vya, vya2, vyb2);
+        IDX_WRITE_TRI(vya, vyb, vyb2);
+
+        // Bottom edge
+        IDX_WRITE_TRI(vyd, vyd2, vyc2);
+        IDX_WRITE_TRI(vyd, vyc, vyc2);
+
+        // Left edge
+        IDX_WRITE_TRI(vxa, vxa2, vxd2);
+        IDX_WRITE_TRI(vxa, vxd, vxd2);
+
+        // Right edge
+        IDX_WRITE_TRI(vxb, vxb2, vxc2);
+        IDX_WRITE_TRI(vxb, vxc, vxc2);
+
+        // Corners
+
+        if (ba)
+        {
+            IDX_WRITE_TRI(vxa, vxa2, oxa);
+            IDX_WRITE_TRI(oxa, vxa2, oia);
+            IDX_WRITE_TRI(oxa, oca, oia);
+            IDX_WRITE_TRI(oca, oya, oia);
+            IDX_WRITE_TRI(oya, vya2, oia);
+            IDX_WRITE_TRI(oya, vya, vya2);
+        }
+
+        if (bb)
+        {
+            IDX_WRITE_TRI(vxb, vxb2, oxb);
+            IDX_WRITE_TRI(oxb, vxb2, oib);
+            IDX_WRITE_TRI(oxb, ocb, oib);
+            IDX_WRITE_TRI(ocb, oyb, oib);
+            IDX_WRITE_TRI(oyb, vyb2, oib);
+            IDX_WRITE_TRI(oyb, vyb, vyb2);
+        }
+
+        if (bc)
+        {
+            IDX_WRITE_TRI(vxc, vxc2, oxc);
+            IDX_WRITE_TRI(oxc, vxc2, oic);
+            IDX_WRITE_TRI(oxc, occ, oic);
+            IDX_WRITE_TRI(occ, oyc, oic);
+            IDX_WRITE_TRI(oyc, vyc2, oic);
+            IDX_WRITE_TRI(oyc, vyc, vyc2);
+        }
+
+        if (bd)
+        {
+            IDX_WRITE_TRI(vxd, vxd2, oxd);
+            IDX_WRITE_TRI(oxd, vxd2, oid);
+            IDX_WRITE_TRI(oxd, ocd, oid);
+            IDX_WRITE_TRI(ocd, oyd, oid);
+            IDX_WRITE_TRI(oyd, vyd2, oid);
+            IDX_WRITE_TRI(oyd, vyd, vyd2);
+        }
     }
 
     draw_list->_VtxWritePtr += dv;
     draw_list->_VtxCurrentIdx += dv;
     draw_list->_IdxWritePtr += di;
 
-    draw_list->PrimReserve(di - idcs, dv - vtcs);   // FIXME-OPT
+    IM_ASSERT_PARANOID(di <= idcs);
+    IM_ASSERT_PARANOID(dv <= vtcs);
+
+    // Return any unused vertices/indices
+    draw_list->PrimUnreserve(idcs - di, vtcs - dv);
 
     #undef IDX_WRITE_TRI
     #undef VTX_WRITE
+    #undef VTX_WRITE_LERPED
+    #undef VTX_WRITE_LERPED_CUSTOM_POS
+
+    return true;
 }
 
 // p_min = upper-left, p_max = lower-right
@@ -1315,9 +1663,15 @@ void ImDrawList::AddRect(const ImVec2& p_min, const ImVec2& p_max, ImU32 col, fl
     rounding = ImMin(rounding, ImFabs(p_max.x - p_min.x) * (((rounding_corners & ImDrawCornerFlags_Top) == ImDrawCornerFlags_Top) || ((rounding_corners & ImDrawCornerFlags_Bot) == ImDrawCornerFlags_Bot) ? 0.5f : 1.0f) - 1.0f);
     rounding = ImMin(rounding, ImFabs(p_max.y - p_min.y) * (((rounding_corners & ImDrawCornerFlags_Left) == ImDrawCornerFlags_Left) || ((rounding_corners & ImDrawCornerFlags_Right) == ImDrawCornerFlags_Right) ? 0.5f : 1.0f) - 1.0f);
 
-    // FIXME-ROUNDCORNERS: NOTE HACK TODO figure out why it's broken on small rounding
-    if (ImGui::GetIO().KeyShift && rounding > 3)
-        return AddRoundCornerRect(this, p_min, p_max, col, rounding, rounding_corners, /* fill */ false);
+    // Try to use fast path if we can
+    if (rounding > 0)
+    {
+        if (AddRoundCornerRect(this, p_min, p_max, col, rounding, rounding_corners, /* fill */ false))
+        {
+            // Fast path handled this
+            return;
+        }
+    }
 
     if (Flags & ImDrawListFlags_AntiAliasedLines)
         PathRect(p_min + ImVec2(0.50f, 0.50f), p_max - ImVec2(0.50f, 0.50f), rounding, rounding_corners);
@@ -1336,10 +1690,9 @@ void ImDrawList::AddRectFilled(const ImVec2& p_min, const ImVec2& p_max, ImU32 c
 
     if (rounding > 0.0f && rounding_corners != 0)
     {
-        // FIXME-ROUNDCORNERS: NOTE HACK TODO figure out why it's broken on small rounding
-        if (ImGui::GetIO().KeyShift && rounding > 3)
+        // Try fast path first
+        if (AddRoundCornerRect(this, p_min, p_max, col, rounding, rounding_corners, /* fill */ true))
         {
-            AddRoundCornerRect(this, p_min, p_max, col, rounding, rounding_corners, /* fill */ true);
             return;
         }
         else
@@ -1417,15 +1770,37 @@ void ImDrawList::AddTriangleFilled(const ImVec2& p1, const ImVec2& p2, const ImV
     PathFillConvex(col);
 }
 
-inline void AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, float radius, ImU32 col, bool fill)
+// Draw a circle using the rounded corner textures
+// Returns true if the circle was drawn, or false if for some reason it could not be
+// (in which case the caller should try the regular circle drawing code)
+inline bool AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, float radius, ImU32 col, bool fill)
 {
     const ImDrawListSharedData* data = draw_list->_Data;
     ImTextureID tex_id = data->Font->ContainerAtlas->TexID;
     IM_ASSERT(tex_id == draw_list->_TextureIdStack.back());  // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
 
     const int rad = (int)radius;
-    IM_ASSERT(rad <= data->Font->ContainerAtlas->RoundCornersMaxSize);
 
+    if ((rad < 1) || // Radius 0 will cause issues with the UV lookup below
+        (rad > data->Font->ContainerAtlas->RoundCornersMaxSize))
+    {
+        // We can't handle this
+        return false;
+    }
+
+    // Debug command to force this render path to only execute when shift is held
+    if (!ImGui::GetIO().KeyShift)
+    {
+        return false;
+    }
+
+    // Calculate UVs for the three points we are interested in from the texture
+    // corner_uv[0] is the innermost point of the circle (solid for filled circles)
+    // corner_uv[1] is either straight down or across from it (depending on if we are using the filled or stroked version)
+    // corner_uv[2] is diagonally across from it
+    // corner_uv[1] is always solid (either inside the circle or on the line), whilst corner_uv[2] is always blank
+    // This represents a 45 degree "wedge" of circle, which then gets mirrored here to produce a 90 degree curve
+    // See ImFontAtlasBuildRenderRoundCornersTexData() for more details of the texture contents
     const ImVec4& uvs = (*(fill ? data->TexUvRoundCornerFilled : data->TexUvRoundCornerStroked))[rad - 1];
     const ImVec2 corner_uv[3] = 
     {
@@ -1434,55 +1809,193 @@ inline void AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, fl
         ImVec2(uvs.z, uvs.w),
     };
 
+    // Our line width (requires a texture with the appropriate line width to actually do anything)
+    const float line_width = 1.0f;
+
+    // Calculate the circle bounds
     const ImVec2& c = center;
     ImVec2 tl = ImVec2(c.x - rad, c.y - rad);
     ImVec2 br = ImVec2(c.x + rad, c.y + rad);
 
-    // NOTE: test performance using locals instead of array
-    const ImVec2 circle_vt[9] = 
-    {
-        c,
-        tl,
-        ImVec2(c.x, tl.y),
-        ImVec2(br.x, tl.y),
-        ImVec2(br.x, c.y),
-        br,
-        ImVec2(c.x, br.y),
-        ImVec2(tl.x, br.y),
-        ImVec2(tl.x, c.y),
-    };
+    // A couple of useful constants for our calculations
+    const float half_sqrt_two = 0.70710678f; // sqrtf(2.0f) * 0.5f
+    const float sqrt_two_minus_one = 0.41421356f; // sqrt(2.0f) - 1.0f
 
+    // The positions of our intermediate vertices
+    // These are organised by quadrant (TL = top-left, etc),
+    // with A being the first point encountered when walking clockwise
+    // around the circle within that quadrant, B the second and C the third.
+    // These points form a tight fit around the outer edge of the circle.
+
+    const float width_offset_parametric = line_width / rad; // Line width in our parametric coordinate space
+
+    const ImVec2 tla = ImVec2(tl.x, ImLerp(c.y, tl.y, sqrt_two_minus_one));
+    const ImVec2 tlb = ImVec2(ImLerp(c.x, tl.x, half_sqrt_two + width_offset_parametric), ImLerp(c.y, tl.y, half_sqrt_two + width_offset_parametric));
+    const ImVec2 tlc = ImVec2(ImLerp(c.x, tl.x, sqrt_two_minus_one), tl.y);
+    const ImVec2 tra = ImVec2(ImLerp(c.x, br.x, sqrt_two_minus_one), tl.y);
+    const ImVec2 trb = ImVec2(ImLerp(c.x, br.x, half_sqrt_two + width_offset_parametric), ImLerp(c.y, tl.y, half_sqrt_two + width_offset_parametric));
+    const ImVec2 trc = ImVec2(br.x, ImLerp(c.y, tl.y, sqrt_two_minus_one));
+    const ImVec2 bra = ImVec2(br.x, ImLerp(c.y, br.y, sqrt_two_minus_one));
+    const ImVec2 brb = ImVec2(ImLerp(c.x, br.x, half_sqrt_two + width_offset_parametric), ImLerp(c.y, br.y, half_sqrt_two + width_offset_parametric));
+    const ImVec2 brc = ImVec2(ImLerp(c.x, br.x, sqrt_two_minus_one), br.y);
+    const ImVec2 bla = ImVec2(ImLerp(c.x, tl.x, sqrt_two_minus_one), br.y);
+    const ImVec2 blb = ImVec2(ImLerp(c.x, tl.x, half_sqrt_two + width_offset_parametric), ImLerp(c.y, br.y, half_sqrt_two + width_offset_parametric));
+    const ImVec2 blc = ImVec2(tl.x, ImLerp(c.y, br.y, sqrt_two_minus_one));
+
+    // UVs for the A/B/C points
+
+    // Calculate the UV for a position within a quadrant
+    // px and py are the parametric position within the quadrant
+    // (0,0 at the inside, 1,1 at the outside).
+    // The px<py check is necessary because we need to mirror the texture across
+    // the diagonal (as we only have 45 degrees' worth of actual valid pixel data)
+    // This needs to be done the opposite way around for filled vs unfilled as they
+    // each occupy one side of the texture
+#define CALC_CORNER_UV(px, py) ((px < py) ^ fill) ?                                                          \
+            ImVec2(ImLerp(corner_uv[0].x, corner_uv[2].x, py), ImLerp(corner_uv[0].y, corner_uv[2].y, px)) : \
+            ImVec2(ImLerp(corner_uv[0].x, corner_uv[2].x, px), ImLerp(corner_uv[0].y, corner_uv[2].y, py))
+
+    ImVec2 uva = CALC_CORNER_UV(1.0f, sqrt_two_minus_one);
+    ImVec2 uvb = CALC_CORNER_UV(half_sqrt_two + width_offset_parametric, half_sqrt_two + width_offset_parametric);
+    ImVec2 uvc = CALC_CORNER_UV(sqrt_two_minus_one, 1.0f);
+
+    const int num_verts = fill ? 17 : 24; // Number of vertices we are going to write
+    const int num_indices = fill ? 48 : 72; // Number of indices we are going to write
+
+    draw_list->PrimReserve(num_indices, num_verts);
+
+    // Write a vertex
+    // d is the vertex index to write to
+    // vert_pos is the vertex position
+    // uv_coord is the UV coordinate
+#define VTX_WRITE(d, vert_pos, uv_coord)                        \
+        draw_list->_VtxWritePtr[d].pos = vert_pos;              \
+        draw_list->_VtxWritePtr[d].uv = uv_coord;               \
+        draw_list->_VtxWritePtr[d].col = col
+
+    // Edge vertices working around the circle clockwise from the left
+    VTX_WRITE(0, ImVec2(tl.x, c.y), corner_uv[1]);
+    VTX_WRITE(1, tla, uva);
+    VTX_WRITE(2, tlb, uvb);
+    VTX_WRITE(3, tlc, uvc);
+    VTX_WRITE(4, ImVec2(c.x, tl.y), corner_uv[1]);
+    VTX_WRITE(5, tra, uva);
+    VTX_WRITE(6, trb, uvb);
+    VTX_WRITE(7, trc, uvc);
+    VTX_WRITE(8, ImVec2(br.x, c.y), corner_uv[1]);
+    VTX_WRITE(9, bra, uva);
+    VTX_WRITE(10, brb, uvb);
+    VTX_WRITE(11, brc, uvc);
+    VTX_WRITE(12, ImVec2(c.x, br.y), corner_uv[1]);
+    VTX_WRITE(13, bla, uva);
+    VTX_WRITE(14, blb, uvb);
+    VTX_WRITE(15, blc, uvc);
+
+    if (fill)
+    {
+        // The centre
+        VTX_WRITE(16, c, corner_uv[0]);
+    }
+    else
+    {
+        // Inside vertices, offset from the "B" vertices by the line width
+
+        const ImVec2 tlbi = ImVec2(ImLerp(c.x, tl.x, half_sqrt_two - width_offset_parametric), ImLerp(c.y, tl.y, half_sqrt_two - width_offset_parametric));
+        const ImVec2 trbi = ImVec2(ImLerp(c.x, br.x, half_sqrt_two - width_offset_parametric), ImLerp(c.y, tl.y, half_sqrt_two - width_offset_parametric));
+        const ImVec2 brbi = ImVec2(ImLerp(c.x, br.x, half_sqrt_two - width_offset_parametric), ImLerp(c.y, br.y, half_sqrt_two - width_offset_parametric));
+        const ImVec2 blbi = ImVec2(ImLerp(c.x, tl.x, half_sqrt_two - width_offset_parametric), ImLerp(c.y, br.y, half_sqrt_two - width_offset_parametric));
+
+        // UV for the inside "B" points
+        ImVec2 uvbi = CALC_CORNER_UV(half_sqrt_two - width_offset_parametric, half_sqrt_two - width_offset_parametric);
+        // UV for the interior cardinal points
+        ImVec2 uvi_cardinal = CALC_CORNER_UV(0.0f, 1.0f - width_offset_parametric);
+
+        // Inner vertices, starting from the left
+        VTX_WRITE(16, ImVec2(tl.x + line_width, c.y), uvi_cardinal);
+        VTX_WRITE(17, tlbi, uvbi);
+        VTX_WRITE(18, ImVec2(c.x, tl.y + line_width), uvi_cardinal);
+        VTX_WRITE(19, trbi, uvbi);
+        VTX_WRITE(20, ImVec2(br.x - line_width, c.y), uvi_cardinal);
+        VTX_WRITE(21, brbi, uvbi);
+        VTX_WRITE(22, ImVec2(c.x, br.y - line_width), uvi_cardinal);
+        VTX_WRITE(23, blbi, uvbi);
+    }
+
+    // Write indices for a triangle formed of three indices
+    // d is the array index to write to
     #define IDX_WRITE_TRI(d, idx0, idx1, idx2)                  \
         draw_list->_IdxWritePtr[d+0] = (ImDrawIdx)(idx+idx0);   \
         draw_list->_IdxWritePtr[d+1] = (ImDrawIdx)(idx+idx1);   \
         draw_list->_IdxWritePtr[d+2] = (ImDrawIdx)(idx+idx2)
 
-    #define VTX_WRITE(d, i)                                     \
-        draw_list->_VtxWritePtr[d].pos = circle_vt[d];          \
-        draw_list->_VtxWritePtr[d].uv = corner_uv[i];           \
-        draw_list->_VtxWritePtr[d].col = col
-
-    draw_list->PrimReserve(24, 9);
     ImDrawIdx idx = (ImDrawIdx)draw_list->_VtxCurrentIdx;
-    IDX_WRITE_TRI( 0, 0, 1, 2);
-    IDX_WRITE_TRI( 3, 0, 3, 2);
-    IDX_WRITE_TRI( 6, 0, 3, 4);
-    IDX_WRITE_TRI( 9, 0, 5, 4);
-    IDX_WRITE_TRI(12, 0, 5, 6);
-    IDX_WRITE_TRI(15, 0, 7, 6);
-    IDX_WRITE_TRI(18, 0, 7, 8);
-    IDX_WRITE_TRI(21, 0, 1, 8);
 
-    VTX_WRITE(1, 2); VTX_WRITE(2, 1); VTX_WRITE(3, 2);
-    VTX_WRITE(8, 1); VTX_WRITE(0, 0); VTX_WRITE(4, 1);
-    VTX_WRITE(7, 2); VTX_WRITE(6, 1); VTX_WRITE(5, 2);
+    if (fill)
+    {
+        // A simple fan of tris from the centre
+        IDX_WRITE_TRI(0, 16, 0, 1);
+        IDX_WRITE_TRI(3, 16, 1, 2);
+        IDX_WRITE_TRI(6, 16, 2, 3);
+        IDX_WRITE_TRI(9, 16, 3, 4);
+        IDX_WRITE_TRI(12, 16, 4, 5);
+        IDX_WRITE_TRI(15, 16, 5, 6);
+        IDX_WRITE_TRI(18, 16, 6, 7);
+        IDX_WRITE_TRI(21, 16, 7, 8);
+        IDX_WRITE_TRI(24, 16, 8, 9);
+        IDX_WRITE_TRI(27, 16, 9, 10);
+        IDX_WRITE_TRI(30, 16, 10, 11);
+        IDX_WRITE_TRI(33, 16, 11, 12);
+        IDX_WRITE_TRI(36, 16, 12, 13);
+        IDX_WRITE_TRI(39, 16, 13, 14);
+        IDX_WRITE_TRI(42, 16, 14, 15);
+        IDX_WRITE_TRI(45, 16, 15, 0);
+    }
+    else
+    {
+        // A more complex set of triangles to form a ring
 
-    draw_list->_VtxWritePtr += 9;
-    draw_list->_VtxCurrentIdx += 9;
-    draw_list->_IdxWritePtr += 24;
+        // Top-left quadrant
+        IDX_WRITE_TRI(0, 16, 0, 1);
+        IDX_WRITE_TRI(3, 16, 1, 17);
+        IDX_WRITE_TRI(6, 17, 1, 2);
+        IDX_WRITE_TRI(9, 17, 2, 3);
+        IDX_WRITE_TRI(12, 17, 3, 18);
+        IDX_WRITE_TRI(15, 18, 3, 4);        
+                
+        // Top-right quadrant
+        IDX_WRITE_TRI(18, 18, 4, 5);
+        IDX_WRITE_TRI(21, 18, 5, 19);
+        IDX_WRITE_TRI(24, 19, 5, 6);
+        IDX_WRITE_TRI(27, 19, 6, 7);
+        IDX_WRITE_TRI(30, 19, 7, 20);
+        IDX_WRITE_TRI(33, 20, 7, 8);
+
+        // Bottom-right quadrant
+        IDX_WRITE_TRI(36, 20, 8, 9);
+        IDX_WRITE_TRI(39, 20, 9, 21);
+        IDX_WRITE_TRI(42, 21, 9, 10);
+        IDX_WRITE_TRI(45, 21, 10, 11);
+        IDX_WRITE_TRI(48, 21, 11, 22);
+        IDX_WRITE_TRI(51, 22, 11, 12);
+
+        // Bottom-left quadrant
+        IDX_WRITE_TRI(54, 22, 12, 13);
+        IDX_WRITE_TRI(57, 22, 13, 23);
+        IDX_WRITE_TRI(60, 23, 13, 14);
+        IDX_WRITE_TRI(63, 23, 14, 15);
+        IDX_WRITE_TRI(66, 23, 15, 16);
+        IDX_WRITE_TRI(69, 16, 15, 0);
+    }
+
+    draw_list->_VtxWritePtr += num_verts;
+    draw_list->_VtxCurrentIdx += num_verts;
+    draw_list->_IdxWritePtr += num_indices;
 
 #undef IDX_WRITE_TRI
 #undef VTX_WRITE
+#undef CALC_CORNER_UV
+
+    return true;
 }
 
 void ImDrawList::AddCircle(const ImVec2& center, float radius, ImU32 col, int num_segments, float thickness)
@@ -1490,9 +2003,10 @@ void ImDrawList::AddCircle(const ImVec2& center, float radius, ImU32 col, int nu
     if ((col & IM_COL32_A_MASK) == 0 || radius <= 0.0f)
         return;
 
-    if (ImGui::GetIO().KeyShift) // FIXME-ROUNDCORNERS
+    // First try the fast texture-based renderer, and only if that can't handle this fall back to paths
+
+    if (AddRoundCornerCircle(this, center, radius, col, false))
     {
-        AddRoundCornerCircle(this, center, radius, col, false);
         return;
     }
 
@@ -1524,6 +2038,9 @@ void ImDrawList::AddCircle(const ImVec2& center, float radius, ImU32 col, int nu
 void ImDrawList::AddCircleFilled(const ImVec2& center, float radius, ImU32 col, int num_segments)
 {
     if ((col & IM_COL32_A_MASK) == 0 || radius <= 0.0f)
+
+    // First try the fast texture-based renderer, and only if that can't handle this fall back to paths
+    if (AddRoundCornerCircle(this, center, radius, col, true))
         return;
 
     // Obtain segment count
@@ -1566,14 +2083,8 @@ void ImDrawList::AddNgon(const ImVec2& center, float radius, ImU32 col, int num_
 // Guaranteed to honor 'num_segments'
 void ImDrawList::AddNgonFilled(const ImVec2& center, float radius, ImU32 col, int num_segments)
 {
-    if ((col & IM_COL32_A_MASK) == 0 || num_segments <= 2)
+    if ((col & IM_COL32_A_MASK) == 0 || (num_segments <= 2) || (radius <= 0.0f))
         return;
-
-    if (ImGui::GetIO().KeyShift) // FIXME-ROUNDCORNERS
-    {
-        AddRoundCornerCircle(this, center, radius, col, true);
-        return;
-    }
 
     // Because we are filling a closed shape we remove 1 from the count of segments/points
     const float a_max = (IM_PI * 2.0f) * ((float)num_segments - 1.0f) / (float)num_segments;
@@ -2746,7 +3257,11 @@ void ImFontAtlasBuildInit(ImFontAtlas* atlas)
 }
 
 const int          FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING = 2;
+// Padding applied to the Y axis to separate the two halves of the image
+// This must be a multiple of two
+const int          FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING = 4;
 
+// Register the rectangles we need for the rounded corner images
 static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
 {
     if (atlas->RoundCornersRectIds.Size > 0)
@@ -2757,15 +3272,11 @@ static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
     const int pad = FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING;
     const int max = atlas->RoundCornersMaxSize;
 
-    // Filled
     for (int n = 0; n < max; n++)
-        atlas->RoundCornersRectIds.push_back(atlas->AddCustomRectRegular(n + 1 + pad * 2, n + 1 + pad * 2));
-
-    // Stroked
-    for (int n = 0; n < max; n++)
-        atlas->RoundCornersRectIds.push_back(atlas->AddCustomRectRegular(n + 1 + pad * 2, n + 1 + pad * 2));
+        atlas->RoundCornersRectIds.push_back(atlas->AddCustomRectRegular(n + 1 + pad * 2, n + 1 + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING  + pad * 2));
 }
 
+// Generate the actual pixel data for rounded corners in the atlas
 static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
 {
     IM_ASSERT(atlas->TexPixelsAlpha8 != NULL);
@@ -2778,49 +3289,77 @@ static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
     const int w = atlas->TexWidth;
     const unsigned int max = atlas->RoundCornersMaxSize;
     const int pad = FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING;
-    for (unsigned int stage = 0; stage < 2; stage++)
+    for (unsigned int n = 0; n < max; n++)
     {
-        const bool filled = (stage == 0);
-        for (unsigned int n = 0; n < max; n++)
-        {
-            const unsigned int id = (filled ? 0 : max) + n;
-            IM_ASSERT(atlas->RoundCornersRectIds.Size > (int)n);
-            ImFontAtlas::CustomRect& r = atlas->CustomRects[atlas->RoundCornersRectIds[id]];
-            IM_ASSERT(r.IsPacked());
-            IM_ASSERT(r.Width == n + 1 + pad * 2 && r.Height == n + 1 + pad * 2);
+        const unsigned int id = n;
+        IM_ASSERT((int)n < atlas->RoundCornersRectIds.Size);
+        ImFontAtlas::CustomRect& r = atlas->CustomRects[atlas->RoundCornersRectIds[id]];
+        IM_ASSERT(r.IsPacked());
+        IM_ASSERT(r.Width == n + 1 + pad * 2 && r.Height == n + 1 + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING + pad * 2);
 
-            const int radius = (int)(r.Width - pad * 2);
-            const float stroke_width = 1.0f; // FIXME-ROUNDCORNERS
+        // What we're doing here is generating a rectangular image that contains the data for both the filled and
+        // stroked variants of the corner with the radius specified. We do it like this because we only need 45 degrees
+        // worth of curve (as each corner mirrors the texture to get the full 90 degrees), and hence with a little care
+        // we can put both variants into one texture by using two triangular regions. In practice this is a little more
+        // tricky than it first looks because if the two regions are packed tightly you get filtering errors where they meet,
+        // so we offset one vertically from the other by FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING pixels.
+        // The stroked version is at the top-right of the texture, and the filled version at the bottom-left.
 
-            for (int y = -pad; y < (int) (radius); y++)
-                for (int x = (filled ? -pad : y); x < (int)(filled ? y + pad : radius); x++)
+        const int radius = (int)(r.Width - pad * 2);
+        const float stroke_width = 1.0f;
+
+        for (int y = -pad; y < (int)(radius + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING); y++)
+            for (int x = -pad; x < (int)(radius); x++)
+            {
+                // We want the pad area to essentially contain a clamped version of the 0th row/column, so
+                // clamp here. Not doing this results in nasty filtering artifacts at low radii.
+                int cx = ImMax(x, 0);
+                int cy = ImMax(y, 0);
+
+                // The X<Y region of the texture contains the data for filled corners, the X>Y region
+                // the data for stroked ones. We add half of FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING so that
+                // each side gets a buffer zone to avoid filtering artifacts.
+                bool filled = x < (y - (FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING >> 1));
+
+                if (filled)
                 {
-                    const float dist = ImSqrt((float)(x*x+y*y)) - (float)(radius - (filled ? 0 : stroke_width));
-
-                    float alpha = 0.0f;
-                    if (filled)
-                    {
-                        // Fill
-                        alpha = ImClamp(-dist, 0.0f, 1.0f);
-                    }
-                    else
-                    {
-                        // Stroke
-                        const float alpha1 = ImClamp(dist + stroke_width, 0.0f, 1.0f);
-                        const float alpha2 = ImClamp(dist, 0.0f, 1.0f);
-                        alpha = alpha1 - alpha2;
-                    }
-
-                    const unsigned int offset = (int)(r.X + pad + x) + (int)(r.Y + pad + y) * w;
-                    atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * ImSaturate(alpha));
+                    // The filled version starts a little further down the texture to give us the padding in the middle.
+                    cy = ImMax(y - FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING, 0);
                 }
 
+                const float dist = ImSqrt((float)(cx*cx+cy*cy)) - (float)(radius - (filled ? 0 : stroke_width));
+
+                float alpha = 0.0f;
+                if (filled)
+                {
+                    alpha = ImClamp(-dist, 0.0f, 1.0f);
+                }
+                else
+                {
+                    const float alpha1 = ImClamp(dist + stroke_width, 0.0f, 1.0f);
+                    const float alpha2 = ImClamp(dist, 0.0f, 1.0f);
+                    alpha = alpha1 - alpha2;
+                }
+
+                const unsigned int offset = (int)(r.X + pad + x) + (int)(r.Y + pad + y) * w;
+                atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * ImSaturate(alpha));
+            }
+
+        // We generate two sets of UVs for each rectangle, one for the filled portion and one for the
+        // unfilled bit
+
+        for (unsigned int stage = 0; stage < 2; stage++)
+        {
+            ImFontAtlas::CustomRect stageRect = r;
+
+            bool filled = stage == 0;
             ImVec2 uv0, uv1;
-            r.X += pad;
-            r.Y += pad;
-            r.Width -= pad * 2;
-            r.Height -= pad * 2;
-            atlas->CalcCustomRectUV(&r, &uv0, &uv1);
+            stageRect.X += pad;
+            stageRect.Y += pad + (filled ? FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING : 0);
+            stageRect.Width -= (pad * 2);
+            stageRect.Height -= (pad * 2) + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING;
+
+            atlas->CalcCustomRectUV(&stageRect, &uv0, &uv1);
             ImVector<ImVec4>& uvs = (filled ? atlas->TexUvRoundCornerFilled : atlas->TexUvRoundCornerStroked);
             uvs.push_back(ImVec4(uv0.x, uv0.y, uv1.x, uv1.y));
         }
