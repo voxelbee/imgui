@@ -1231,14 +1231,13 @@ inline bool AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImV
     const ImVec2 mdy2(mdy.x, mdy.y - line_width), mcy2(mcy.x, mcy.y - line_width);
     const ImVec2 id(cd.x + rad_d, cd.y - rad_d), ic(cc.x - rad_c, cc.y - rad_c);
 
-    // Generate points CA2-CD2, which are the corner points but inset towards the centre by the line width
+    // Generate points CA2-CD2, which are the corner points but inset towards the center by the line width
     // These are used as edge line end points when rendering un-rounded corners in non-filled mode
 
     const ImVec2 ca2(ca.x + line_width, ca.y + line_width), cb2(cb.x - line_width, cb.y + line_width);
     const ImVec2 cc2(cc.x - line_width, cc.y - line_width), cd2(cd.x + line_width, cd.y - line_width);
 
-    // Reserve enough space for the worse-case vertex/index count
-    // (we give back any left over space later)
+    // Reserve enough space for the worse-case vertex/index count (we give back any left over space later)
     const int vtcs = 48;
     const int idcs = 32 * 3;
     draw_list->PrimReserve(idcs, vtcs);
@@ -1278,10 +1277,8 @@ inline bool AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImV
             ImVec2(ImLerp(corner_uv[0].x, corner_uv[b##corner ? 2 : 1].x, px), ImLerp(corner_uv[0].y, corner_uv[b##corner ? 2 : 1].y, py));  \
         draw_list->_VtxWritePtr[d].col = col
 
-    // Set up the outer corners (vca-vcd being the four outermost
-    // corners)
-    // If the corner is rounded we use the "empty" corner UV, if not we use
-    // the "filled" one
+    // Set up the outer corners (vca-vcd being the four outermost corners)
+    // If the corner is rounded we use the "empty" corner UV, if not we use the "filled" one.
     const int vca = 0, vcb = 1, vcc = 2, vcd = 3;
     VTX_WRITE(vca, ca, ba ? 2 : 1);
     VTX_WRITE(vcb, cb, bb ? 2 : 1);
@@ -1780,19 +1777,13 @@ inline bool AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, fl
     IM_ASSERT(tex_id == draw_list->_TextureIdStack.back());  // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
 
     const int rad = (int)radius;
-
     if ((rad < 1) || // Radius 0 will cause issues with the UV lookup below
         (rad > data->Font->ContainerAtlas->RoundCornersMaxSize))
-    {
-        // We can't handle this
-        return false;
-    }
+        return false; // We can't handle this
 
     // Debug command to force this render path to only execute when shift is held
     if (!ImGui::GetIO().KeyShift)
-    {
         return false;
-    }
 
     // Calculate UVs for the three points we are interested in from the texture
     // corner_uv[0] is the innermost point of the circle (solid for filled circles)
@@ -1822,7 +1813,7 @@ inline bool AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, fl
     const float sqrt_two_minus_one = 0.41421356f; // sqrt(2.0f) - 1.0f
 
     // The positions of our intermediate vertices
-    // These are organised by quadrant (TL = top-left, etc),
+    // These are organized by quadrant (TL = top-left, etc),
     // with A being the first point encountered when walking clockwise
     // around the circle within that quadrant, B the second and C the third.
     // These points form a tight fit around the outer edge of the circle.
@@ -1865,9 +1856,9 @@ inline bool AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, fl
     draw_list->PrimReserve(num_indices, num_verts);
 
     // Write a vertex
-    // d is the vertex index to write to
-    // vert_pos is the vertex position
-    // uv_coord is the UV coordinate
+    // - d is the vertex index to write to
+    // - vert_pos is the vertex position
+    // - uv_coord is the UV coordinate
 #define VTX_WRITE(d, vert_pos, uv_coord)                        \
         draw_list->_VtxWritePtr[d].pos = vert_pos;              \
         draw_list->_VtxWritePtr[d].uv = uv_coord;               \
@@ -1893,13 +1884,12 @@ inline bool AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, fl
 
     if (fill)
     {
-        // The centre
+        // The center
         VTX_WRITE(16, c, corner_uv[0]);
     }
     else
     {
         // Inside vertices, offset from the "B" vertices by the line width
-
         const ImVec2 tlbi = ImVec2(ImLerp(c.x, tl.x, half_sqrt_two - width_offset_parametric), ImLerp(c.y, tl.y, half_sqrt_two - width_offset_parametric));
         const ImVec2 trbi = ImVec2(ImLerp(c.x, br.x, half_sqrt_two - width_offset_parametric), ImLerp(c.y, tl.y, half_sqrt_two - width_offset_parametric));
         const ImVec2 brbi = ImVec2(ImLerp(c.x, br.x, half_sqrt_two - width_offset_parametric), ImLerp(c.y, br.y, half_sqrt_two - width_offset_parametric));
@@ -1932,7 +1922,7 @@ inline bool AddRoundCornerCircle(ImDrawList* draw_list, const ImVec2& center, fl
 
     if (fill)
     {
-        // A simple fan of tris from the centre
+        // A simple fan of tris from the center
         IDX_WRITE_TRI(0, 16, 0, 1);
         IDX_WRITE_TRI(3, 16, 1, 2);
         IDX_WRITE_TRI(6, 16, 2, 3);
@@ -2004,11 +1994,8 @@ void ImDrawList::AddCircle(const ImVec2& center, float radius, ImU32 col, int nu
         return;
 
     // First try the fast texture-based renderer, and only if that can't handle this fall back to paths
-
     if (AddRoundCornerCircle(this, center, radius, col, false))
-    {
         return;
-    }
 
     // Obtain segment count
     if (num_segments <= 0)
@@ -3259,7 +3246,7 @@ void ImFontAtlasBuildInit(ImFontAtlas* atlas)
 const int          FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING = 2;
 // Padding applied to the Y axis to separate the two halves of the image
 // This must be a multiple of two
-const int          FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING = 4;
+const int          FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING = 4;
 
 // Register the rectangles we need for the rounded corner images
 static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
@@ -3271,9 +3258,8 @@ static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
 
     const int pad = FONT_ATLAS_ROUNDED_CORNER_TEX_PADDING;
     const int max = atlas->RoundCornersMaxSize;
-
     for (int n = 0; n < max; n++)
-        atlas->RoundCornersRectIds.push_back(atlas->AddCustomRectRegular(n + 1 + pad * 2, n + 1 + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING  + pad * 2));
+        atlas->RoundCornersRectIds.push_back(atlas->AddCustomRectRegular(n + 1 + pad * 2, n + 1 + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING  + pad * 2));
 }
 
 // Generate the actual pixel data for rounded corners in the atlas
@@ -3295,20 +3281,19 @@ static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
         IM_ASSERT((int)n < atlas->RoundCornersRectIds.Size);
         ImFontAtlas::CustomRect& r = atlas->CustomRects[atlas->RoundCornersRectIds[id]];
         IM_ASSERT(r.IsPacked());
-        IM_ASSERT(r.Width == n + 1 + pad * 2 && r.Height == n + 1 + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING + pad * 2);
+        IM_ASSERT(r.Width == n + 1 + pad * 2 && r.Height == n + 1 + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING + pad * 2);
 
         // What we're doing here is generating a rectangular image that contains the data for both the filled and
         // stroked variants of the corner with the radius specified. We do it like this because we only need 45 degrees
         // worth of curve (as each corner mirrors the texture to get the full 90 degrees), and hence with a little care
         // we can put both variants into one texture by using two triangular regions. In practice this is a little more
         // tricky than it first looks because if the two regions are packed tightly you get filtering errors where they meet,
-        // so we offset one vertically from the other by FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING pixels.
+        // so we offset one vertically from the other by FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING pixels.
         // The stroked version is at the top-right of the texture, and the filled version at the bottom-left.
-
         const int radius = (int)(r.Width - pad * 2);
         const float stroke_width = 1.0f;
 
-        for (int y = -pad; y < (int)(radius + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING); y++)
+        for (int y = -pad; y < (int)(radius + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING); y++)
             for (int x = -pad; x < (int)(radius); x++)
             {
                 // We want the pad area to essentially contain a clamped version of the 0th row/column, so
@@ -3317,14 +3302,13 @@ static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
                 int cy = ImMax(y, 0);
 
                 // The X<Y region of the texture contains the data for filled corners, the X>Y region
-                // the data for stroked ones. We add half of FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING so that
+                // the data for stroked ones. We add half of FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING so that
                 // each side gets a buffer zone to avoid filtering artifacts.
-                bool filled = x < (y - (FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING >> 1));
-
+                const bool filled = x < (y - (FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING >> 1));
                 if (filled)
                 {
                     // The filled version starts a little further down the texture to give us the padding in the middle.
-                    cy = ImMax(y - FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING, 0);
+                    cy = ImMax(y - FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING, 0);
                 }
 
                 const float dist = ImSqrt((float)(cx*cx+cy*cy)) - (float)(radius - (filled ? 0 : stroke_width));
@@ -3345,21 +3329,19 @@ static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
                 atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * ImSaturate(alpha));
             }
 
-        // We generate two sets of UVs for each rectangle, one for the filled portion and one for the
-        // unfilled bit
-
+        // We generate two sets of UVs for each rectangle, one for the filled portion and one for the unfilled bit.
         for (unsigned int stage = 0; stage < 2; stage++)
         {
-            ImFontAtlas::CustomRect stageRect = r;
+            ImFontAtlas::CustomRect stage_rect = r;
 
-            bool filled = stage == 0;
+            const bool filled = (stage == 0);
+            stage_rect.X += pad;
+            stage_rect.Y += pad + (filled ? FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING : 0);
+            stage_rect.Width -= (pad * 2);
+            stage_rect.Height -= (pad * 2) + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING;
+
             ImVec2 uv0, uv1;
-            stageRect.X += pad;
-            stageRect.Y += pad + (filled ? FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING : 0);
-            stageRect.Width -= (pad * 2);
-            stageRect.Height -= (pad * 2) + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTRE_PADDING;
-
-            atlas->CalcCustomRectUV(&stageRect, &uv0, &uv1);
+            atlas->CalcCustomRectUV(&stage_rect, &uv0, &uv1);
             ImVector<ImVec4>& uvs = (filled ? atlas->TexUvRoundCornerFilled : atlas->TexUvRoundCornerStroked);
             uvs.push_back(ImVec4(uv0.x, uv0.y, uv1.x, uv1.y));
         }
