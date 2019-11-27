@@ -329,6 +329,7 @@ static void TestTextureBasedRender()
     ImGui::Separator();
 
     ImGui::Text("Style");
+    ImGui::SliderFloat("FrameBorderSize", &style.FrameBorderSize, 0.0f, 3.0f, "%.0f");
     ImGui::SliderFloat("FrameRounding", &style.FrameRounding, 0.0f, 100.0f, "%.0f");
     ImGui::SliderFloat("WindowRounding", &style.WindowRounding, 0.0f, 100.0f, "%.0f");
 
