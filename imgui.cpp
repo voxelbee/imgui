@@ -5128,34 +5128,100 @@ static const ImGuiResizeBorderDef resize_border_def[4] =
     { ImVec2(+1, 0), ImVec2(0, 1), ImVec2(0, 0), IM_PI * 1.00f } // Left
 };
 
-static void AddResizeGrip(ImDrawList* dl, const ImVec2& corner, unsigned int rad, int rounding_corners_flag, ImU32 col)
+// Add a resize grip using the rounded corner textures, if possible.
+// Returns false if rendering could not be performed, true otherwise
+static bool AddResizeGrip(ImDrawList* dl, const ImVec2& corner, unsigned int rad, unsigned int overall_grip_size, ImDrawCornerFlags rounding_corners_flag, ImU32 col)
 {
+    if (!(dl->Flags & ImDrawListFlags_TexturedRoundCorners)) // Disabled by the draw list flags
+        return false;
+
+    ImGuiContext& g = *GImGui;
+
+    if (!g.IO.KeyAlt) // Debug - only use texture-based rendering if alt is pressed
+        return false;
+
     ImTextureID tex = dl->_Data->Font->ContainerAtlas->TexID;
     IM_ASSERT(tex == dl->_TextureIdStack.back());       // Use high-level ImGui::PushFont() or low-level ImDrawList::PushTextureId() to change font.
-    IM_ASSERT(ImIsPowerOfTwo(rounding_corners_flag));   // Allow a single corner to be specified here.
+    IM_ASSERT(ImIsPowerOfTwo(rounding_corners_flag));   // Only allow a single corner to be specified here.
 
+    if (dl->_Data->Font->ContainerAtlas->Flags & ImFontAtlasFlags_NoTexturedRoundCorners) // No data in font
+        return false;
+
+    if (rad < 1 || rad > (unsigned int)dl->_Data->Font->ContainerAtlas->RoundCornersMaxSize) // Radius 0 will cause issues with the UV lookup below
+        return false;
+
+    // Calculate UVs for the three points we are interested in from the texture
     const ImVec4& uvs = (*dl->_Data->TexUvRoundCornerFilled)[rad - 1];
+    // uv[0] is the mid-point from the corner towards the centre of the circle (solid)
+    // uv[1] is a solid point on the edge of the circle
+    // uv[2] is the outer edge (blank, outside the circle)
     const ImVec2 uv[] =
     {
         ImVec2(ImLerp(uvs.x, uvs.z, 0.5f), ImLerp(uvs.y, uvs.w, 0.5f)),
-        ImVec2(uvs.x, uvs.w),
+        ImVec2(uvs.x, uvs.y),//ImLerp(uvs.w, uvs.y, 0.1f)),
+        //ImVec2(uvs.x, uvs.w),
         ImVec2(uvs.z, uvs.w),
     };
 
-    ImVec2 in_x = corner, in_y = corner;
+    // Calculate the coordinates of the points at the inside of the rounded area of the corner, and the outside of the grip on the X/Y axes
+        
+    ImVec2 in_x = corner, in_y = corner, out_x = corner, out_y = corner;
     if (rounding_corners_flag & ImDrawCornerFlags_Top)
+    {
         in_y.y += rad;
+        out_y.y += overall_grip_size;
+    }
     else if (rounding_corners_flag & ImDrawCornerFlags_Bot)
+    {
         in_y.y -= rad;
+        out_y.y -= overall_grip_size;
+    }
+
     if (rounding_corners_flag & ImDrawCornerFlags_Left)
+    {
         in_x.x += rad;
+        out_x.x += overall_grip_size;
+    }
     else if (rounding_corners_flag & ImDrawCornerFlags_Right)
+    {
         in_x.x -= rad;
+        out_x.x -= overall_grip_size;
+    }
+
+    // Calculate the mid-point on the diagonal
 
     const ImVec2 mid = ImVec2(ImLerp(in_x.x, in_y.x, 0.5f), ImLerp(in_x.y, in_y.y, 0.5f));
 
-    dl->PrimReserve(6, 4);
-    dl->PrimQuadUV(mid, in_y, corner, in_x, uv[0], uv[1], uv[2], uv[1], col);
+    // Now write out the geometry
+    
+    const int num_verts = 6; // Number of vertices we are going to write
+    const int num_indices = 12; // Number of indices we are going to write
+
+    dl->PrimReserve(num_indices, num_verts);
+
+    ImDrawIdx current_idx = (ImDrawIdx)dl->_VtxCurrentIdx;
+    ImDrawVert* vtx_write_ptr = dl->_VtxWritePtr;
+    ImDrawIdx* idx_write_ptr = dl->_IdxWritePtr;
+
+    vtx_write_ptr[0].pos = mid;     vtx_write_ptr[0].uv = uv[0];    vtx_write_ptr[0].col = col;
+    vtx_write_ptr[1].pos = in_y;    vtx_write_ptr[1].uv = uv[1];    vtx_write_ptr[1].col = col;
+    vtx_write_ptr[2].pos = corner;  vtx_write_ptr[2].uv = uv[2];    vtx_write_ptr[2].col = col;
+    vtx_write_ptr[3].pos = in_x;    vtx_write_ptr[3].uv = uv[1];    vtx_write_ptr[3].col = col;
+    vtx_write_ptr[4].pos = out_x;   vtx_write_ptr[4].uv = uv[1];    vtx_write_ptr[4].col = col;
+    vtx_write_ptr[5].pos = out_y;   vtx_write_ptr[5].uv = uv[1];    vtx_write_ptr[5].col = col;
+
+    // Curved section
+    idx_write_ptr[0] = current_idx; idx_write_ptr[1] = (ImDrawIdx)(current_idx + 1); idx_write_ptr[2] = (ImDrawIdx)(current_idx + 2);
+    idx_write_ptr[3] = current_idx; idx_write_ptr[4] = (ImDrawIdx)(current_idx + 2); idx_write_ptr[5] = (ImDrawIdx)(current_idx + 3);
+    // Outer section
+    idx_write_ptr[6] = (ImDrawIdx)(current_idx + 4); idx_write_ptr[7]  = (ImDrawIdx)(current_idx + 3); idx_write_ptr[8]  = (ImDrawIdx)(current_idx + 5);
+    idx_write_ptr[9] = (ImDrawIdx)(current_idx + 3); idx_write_ptr[10] = (ImDrawIdx)(current_idx + 5); idx_write_ptr[11] = (ImDrawIdx)(current_idx + 1);
+
+    dl->_VtxWritePtr += num_verts;
+    dl->_VtxCurrentIdx += num_verts;
+    dl->_IdxWritePtr += num_indices;
+
+    return true;
 }
 
 static ImRect GetResizeBorderRect(ImGuiWindow* window, int border_n, float perp_padding, float thickness)
@@ -5416,16 +5482,16 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
             {
                 const ImGuiResizeGripDef& grip = resize_grip_def[resize_grip_n];
                 const ImVec2 corner = ImLerp(window->Pos, window->Pos + window->Size, grip.CornerPosN);
-                if (g.IO.KeyAlt) // FIXME-ROUNDCORNERS
+
+                ImVec2 grip_corner = corner;
+                grip_corner.x += grip.InnerDir.x * window_border_size;
+                grip_corner.y += grip.InnerDir.y * window_border_size;
+
+                // Try and use a rounded texture to draw the grip
+                if (!AddResizeGrip(window->DrawList, grip_corner, (unsigned int)window_rounding, (unsigned int)(resize_grip_draw_size - window_border_size), grip.CornerFlags, resize_grip_col[resize_grip_n]))
                 {
-                    ImVec2 grip_corner = corner;
-                    grip_corner.x += grip.InnerDir.x * window_border_size;
-                    grip_corner.y += grip.InnerDir.y * window_border_size;
-                    AddResizeGrip(window->DrawList, grip_corner, (unsigned int)window_rounding, grip.CornerFlags, resize_grip_col[resize_grip_n]);
-                }
-                else
-                {
-                    //window->DrawList->PathLineTo(corner + grip.InnerDir * ((resize_grip_n & 1) ? ImVec2(window_border_size, resize_grip_draw_size) : ImVec2(resize_grip_draw_size, window_border_size)));
+                    // Fall back to using geometry to draw the whole grip if texture-based draw failed
+                    window->DrawList->PathLineTo(corner + grip.InnerDir * ((resize_grip_n & 1) ? ImVec2(window_border_size, resize_grip_draw_size) : ImVec2(resize_grip_draw_size, window_border_size)));
                     window->DrawList->PathLineTo(corner + grip.InnerDir * ((resize_grip_n & 1) ? ImVec2(resize_grip_draw_size, window_border_size) : ImVec2(window_border_size, resize_grip_draw_size)));
                     window->DrawList->PathArcToFast(ImVec2(corner.x + grip.InnerDir.x * (window_rounding + window_border_size), corner.y + grip.InnerDir.y * (window_rounding + window_border_size)), window_rounding, grip.AngleMin12, grip.AngleMax12);
                     window->DrawList->PathFillConvex(resize_grip_col[resize_grip_n]);
