@@ -2494,6 +2494,15 @@ struct ImFontGlyphRangesBuilder
     IMGUI_API void  BuildRanges(ImVector<ImWchar>* out_ranges);                 // Output new ranges
 };
 
+// Data for texture-based rounded corners for a given radius
+struct ImFontRoundedCornerData
+{
+    ImVec4 TexUvFilled; // UV of filled round corner quad in the atlas
+    ImVec4 TexUvStroked;  // UV of stroked round corner quad in the atlas
+    float ParametricStrokeWidth; // Pre-calculated value for stroke width divided by the radius
+    int RectId; // Rect ID in the atlas
+};
+
 // See ImFontAtlas::AddCustomRectXXX functions.
 struct ImFontAtlasCustomRect
 {
@@ -2621,12 +2630,7 @@ struct ImFontAtlas
     int                         PackIdMouseCursors; // Custom texture rectangle ID for white pixel and mouse cursors
     int                         PackIdLines;        // Custom texture rectangle ID for baked anti-aliased lines
 
-    // FIXME-ROUNDCORNERS: WIP
-    // FIXME: avoid so many allocations, statically sized buffer removing an indirection may be beneficial here?
-    int                     RoundCornersMaxSize;    // Max pixel size of round corner textures to generate
-    ImVector<int>           RoundCornersRectIds;    // Ids of custom rects for round corners indexed by size [0] is 1px, [n] is (n+1)px (index up to RoundCornersMaxSize - 1).
-    ImVector<ImVec4>        TexUvRoundCornerFilled; // Texture coordinates to filled round corner quads
-    ImVector<ImVec4>        TexUvRoundCornerStroked;// Texture coordinates to stroked round corner quads
+    ImVector<ImFontRoundedCornerData> TexRoundCornerData; // Data for texture-based round corners indexed by size [0] is 1px, [n] is (n+1)px (index up to ImFontAtlasRoundCornersMaxSize - 1).
 
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     typedef ImFontAtlasCustomRect    CustomRect;         // OBSOLETED in 1.72+

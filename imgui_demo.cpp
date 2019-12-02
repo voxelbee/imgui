@@ -237,12 +237,7 @@ static void GetVtxIdxDelta(ImDrawList* dl, int* vtx, int *idx)
 }
 
 // https://github.com/ocornut/imgui/issues/1962
-// FIXME-ROUNDCORNERS: Sizes aren't matching.
-// FIXME-ROUNDCORNERS: Lift the RoundCornersMaxSize limitation, fallback on existing renderer.
-// FIXME-ROUNDCORNERS: Work on reducing filtrate for stroked shapes (may need to trade some cpu/vtx to reduce fill-rate for e.g. simple stroked circle) > https://github.com/ocornut/imgui/issues/1962#issuecomment-411507917
 // FIXME-ROUNDCORNERS: Figure out how to support multiple thickness, might hard-code common steps (1.0, 1.5, 2.0, 3.0), not super satisfactory but may be best
-// FIXME-ROUNDCORNERS: AddCircle* API relying on num_segments may need rework, might obsolete this parameter, or make it 0 default and rely on automatic subdivision similar to style.CurveTessellationTol for Bezier
-// FIXME-ROUNDCORNERS: Intentional "low segment count" shapes (e.g. hexagon) currently achieved with AddCircle may need a new API (AddNgon?)
 static void TestTextureBasedRender()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -252,10 +247,11 @@ static void TestTextureBasedRender()
 
     ImGui::Text("Hold SHIFT to toggle (%s)", io.KeyShift ? "SHIFT ON  -- Using textures." : "SHIFT OFF -- Old method.");
 
-    static float radius = io.Fonts->RoundCornersMaxSize * 0.5f;
+    static float radius = 16.0f; // ImFontAtlasRoundCornersMaxSize * 0.5f;
     static int segments = 20;
+    static int ngon_segments = 6;
 
-    ImGui::SliderFloat("radius", &radius, 0.0f, (float)io.Fonts->RoundCornersMaxSize, "%.0f");
+    ImGui::SliderFloat("radius", &radius, 0.0f, (float)64 /*ImFontAtlasRoundCornersMaxSize*/, "%.0f");
 
     int vtx_n = 0;
     int idx_n = 0;
@@ -265,7 +261,7 @@ static void TestTextureBasedRender()
         ImGui::BeginGroup();
 
         ImGui::PushItemWidth(120);
-        ImGui::SliderInt("segments", &segments, 3, 100);
+        ImGui::SliderInt("segments", &segments, 0, 100);
         ImGui::PopItemWidth();
 
         {
@@ -326,6 +322,37 @@ static void TestTextureBasedRender()
 
         ImGui::EndGroup();
     }
+
+    ImGui::SameLine();    
+
+    {
+        ImGui::BeginGroup();
+
+        ImGui::PushItemWidth(120);
+        ImGui::SliderInt("ngon_segments", &ngon_segments, 3, 16);
+        ImGui::PopItemWidth();
+
+        {
+            ImGui::Button("##3", ImVec2(200, 200));
+            GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
+            ImVec2 min = ImGui::GetItemRectMin();
+            ImVec2 size = ImGui::GetItemRectSize();
+            draw_list->AddNgonFilled(ImVec2(min.x + size.x * 0.5f, min.y + size.y * 0.5f), radius, IM_COL32(255, 0, 255, 255), ngon_segments);
+            GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
+            ImGui::Text("AddNgonFilled\n %d vtx, %d idx", vtx_n, idx_n);
+        }
+        {
+            ImGui::Button("##4", ImVec2(200, 200));
+            GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
+            ImVec2 min = ImGui::GetItemRectMin();
+            ImVec2 size = ImGui::GetItemRectSize();
+            draw_list->AddNgon(ImVec2(min.x + size.x * 0.5f, min.y + size.y * 0.5f), radius, IM_COL32(255, 0, 255, 255), ngon_segments);
+            GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
+            ImGui::Text("AddNgon\n %d vtx, %d idx", vtx_n, idx_n);
+        }
+        ImGui::EndGroup();
+    }
+
     ImGui::Separator();
 
     ImGui::Text("Style");
