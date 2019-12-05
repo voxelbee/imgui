@@ -237,7 +237,6 @@ static void GetVtxIdxDelta(ImDrawList* dl, int* vtx, int *idx)
 }
 
 // https://github.com/ocornut/imgui/issues/1962
-// FIXME-ROUNDCORNERS: Figure out how to support multiple thickness, might hard-code common steps (1.0, 1.5, 2.0, 3.0), not super satisfactory but may be best
 static void TestTextureBasedRender()
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -251,7 +250,11 @@ static void TestTextureBasedRender()
     static int segments = 20;
     static int ngon_segments = 6;
 
-    ImGui::SliderFloat("radius", &radius, 0.0f, (float)64 /*ImFontAtlasRoundCornersMaxSize*/, "%.0f");
+    ImGui::SliderFloat("radius", &radius, 0.0f, 64.0f /*(float)ImFontAtlasRoundCornersMaxSize*/, "%.0f");
+
+    static float stroke_width = 1.0f;
+
+    ImGui::SliderFloat("stroke_width", &stroke_width, 1.0f, 10.0f, "%.0f");
 
     int vtx_n = 0;
     int idx_n = 0;
@@ -278,7 +281,7 @@ static void TestTextureBasedRender()
             GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
             ImVec2 min = ImGui::GetItemRectMin();
             ImVec2 size = ImGui::GetItemRectSize();
-            draw_list->AddCircle(ImVec2(min.x + size.x * 0.5f, min.y + size.y * 0.5f), radius, IM_COL32(255,0,255,255), segments);
+            draw_list->AddCircle(ImVec2(min.x + size.x * 0.5f, min.y + size.y * 0.5f), radius, IM_COL32(255,0,255,255), segments, stroke_width);
             GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
             ImGui::Text("AddCircle\n %d vtx, %d idx", vtx_n, idx_n);
         }
@@ -315,7 +318,7 @@ static void TestTextureBasedRender()
             ImVec2 r_max = ImGui::GetItemRectMax();
 
             GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
-            draw_list->AddRect(r_min, r_max, IM_COL32(255,0,255,255), radius, corner_flags);
+            draw_list->AddRect(r_min, r_max, IM_COL32(255,0,255,255), radius, corner_flags, stroke_width);
             GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
             ImGui::Text("AddRect\n %d vtx, %d idx", vtx_n, idx_n);
         }
@@ -346,7 +349,7 @@ static void TestTextureBasedRender()
             GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
             ImVec2 min = ImGui::GetItemRectMin();
             ImVec2 size = ImGui::GetItemRectSize();
-            draw_list->AddNgon(ImVec2(min.x + size.x * 0.5f, min.y + size.y * 0.5f), radius, IM_COL32(255, 0, 255, 255), ngon_segments);
+            draw_list->AddNgon(ImVec2(min.x + size.x * 0.5f, min.y + size.y * 0.5f), radius, IM_COL32(255, 0, 255, 255), ngon_segments, stroke_width);
             GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
             ImGui::Text("AddNgon\n %d vtx, %d idx", vtx_n, idx_n);
         }

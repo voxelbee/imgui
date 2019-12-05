@@ -5158,8 +5158,7 @@ static bool AddResizeGrip(ImDrawList* dl, const ImVec2& corner, unsigned int rad
     const ImVec2 uv[] =
     {
         ImVec2(ImLerp(uvs.x, uvs.z, 0.5f), ImLerp(uvs.y, uvs.w, 0.5f)),
-        ImVec2(uvs.x, uvs.y),//ImLerp(uvs.w, uvs.y, 0.1f)),
-        //ImVec2(uvs.x, uvs.w),
+        ImVec2(uvs.x, uvs.y),
         ImVec2(uvs.z, uvs.w),
     };
 

@@ -2497,10 +2497,11 @@ struct ImFontGlyphRangesBuilder
 // Data for texture-based rounded corners for a given radius
 struct ImFontRoundedCornerData
 {
-    ImVec4 TexUvFilled; // UV of filled round corner quad in the atlas
+    ImVec4 TexUvFilled; // UV of filled round corner quad in the atlas (only valid when stroke width is 1)
     ImVec4 TexUvStroked;  // UV of stroked round corner quad in the atlas
     float ParametricStrokeWidth; // Pre-calculated value for stroke width divided by the radius
-    int RectId; // Rect ID in the atlas
+    int RectId; // Rect ID in the atlas, or -1 if there is no data
+    bool StrokedUsesAlternateUVs; // True if stroked drawing should use the alternate (i.e. other corner) UVs
 };
 
 // See ImFontAtlas::AddCustomRectXXX functions.
@@ -2630,7 +2631,7 @@ struct ImFontAtlas
     int                         PackIdMouseCursors; // Custom texture rectangle ID for white pixel and mouse cursors
     int                         PackIdLines;        // Custom texture rectangle ID for baked anti-aliased lines
 
-    ImVector<ImFontRoundedCornerData> TexRoundCornerData; // Data for texture-based round corners indexed by size [0] is 1px, [n] is (n+1)px (index up to ImFontAtlasRoundCornersMaxSize - 1).
+    ImVector<ImFontRoundedCornerData> TexRoundCornerData; // Data for texture-based round corners indexed by radius/size (from 1 to ImFontAtlasRoundCornersMaxSize) and stroke width (from 1 to ImFontAtlasRoundCornersMaxStrokeWidth), with index = stroke_width_index + (radius_index * ImFontAtlasRoundCornersMaxStrokeWidth).
 
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     typedef ImFontAtlasCustomRect    CustomRect;         // OBSOLETED in 1.72+
