@@ -244,7 +244,8 @@ static void TestTextureBasedRender()
 
     ImGui::Begin("tex_round_corners");
 
-    ImGui::Text("Hold SHIFT to toggle (%s)", io.KeyShift ? "SHIFT ON  -- Using textures." : "SHIFT OFF -- Old method.");
+    style.TexturedRoundCorners = io.KeyShift;
+    ImGui::Checkbox("style.TexturedRoundCorners (hold SHIFT to toggle)", &style.TexturedRoundCorners);
 
     static float radius = 16.0f; // ImFontAtlasRoundCornersMaxSize * 0.5f;
     static int segments = 20;
