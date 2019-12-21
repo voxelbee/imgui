@@ -1037,11 +1037,11 @@ enum ImGuiNextItemDataFlags_
 struct ImGuiNextItemData
 {
     ImGuiNextItemDataFlags      Flags;
-    float                       Width;          // Set by SetNextItemWidth()
-    ImGuiID                     FocusScopeId;   // Set by SetNextItemMultiSelectData() (!= 0 signify value has been set, so it's an alternate version of HasSelectionData, we don't use Flags for this because they are cleared too early. This is mostly used for debugging)
+    float                       Width;                  // Set by SetNextItemWidth()
+    ImGuiID                     FocusScopeId;           // Set by SetNextItemMultiSelectData() (!= 0 signify value has been set, so it's an alternate version of HasSelectionData, we don't use Flags for this because they are cleared too early. This is mostly used for debugging)
     ImGuiCond                   OpenCond;
-    bool                        OpenVal;        // Set by SetNextItemOpen()
-    ImGuiID                     MultiSelectScopeId;
+    bool                        OpenVal;                // Set by SetNextItemOpen()
+    ImGuiID                     MultiSelectScopeId;     // Set by SetNextItemMultiSelectData()
     void*                       MultiSelectData;
 
     ImGuiNextItemData()         { memset(this, 0, sizeof(*this)); }
