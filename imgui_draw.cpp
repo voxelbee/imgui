@@ -1152,8 +1152,7 @@ inline bool AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImV
 
     // Filled rectangles have no stroke width
     const int stroke_width = fill ? 1 : (int)thickness;
-
-    if ((stroke_width <= 0) || (stroke_width > ImFontAtlasRoundCornersMaxStrokeWidth))
+    if (stroke_width <= 0 || (int)stroke_width > ImFontAtlasRoundCornersMaxStrokeWidth)
         return false; // We can't handle this
 
     // If we have a >1 stroke width, we actually need to increase the radius appropriately as well to match how the geometry renderer does things
@@ -1260,15 +1259,6 @@ inline bool AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImV
     // the diagonal (as we only have 45 degrees' worth of actual valid pixel data)
     // This needs to be done the opposite way around for filled vs unfilled as they
     // each occupy one side of the texture
-    #define VTX_WRITE_LERPED(d, corner, px, py)                                                                                              \
-        draw_list->_VtxWritePtr[d].pos = ImVec2(ImLerp(i##corner.x, c##corner.x, px), ImLerp(i##corner.y, c##corner.y, py));                 \
-        draw_list->_VtxWritePtr[d].uv = ((px < py) ^ use_alternative_uvs) ?                                                                  \
-            ImVec2(ImLerp(corner_uv[0].x, corner_uv[b##corner ? 2 : 1].x, py), ImLerp(corner_uv[0].y, corner_uv[b##corner ? 2 : 1].y, px)) : \
-            ImVec2(ImLerp(corner_uv[0].x, corner_uv[b##corner ? 2 : 1].x, px), ImLerp(corner_uv[0].y, corner_uv[b##corner ? 2 : 1].y, py));  \
-        draw_list->_VtxWritePtr[d].col = col
-
-    // Optimized versions of the above, for the cases where either px or py is always zero
-
     #define VTX_WRITE_LERPED_X(d, corner, px)                                                                                                \
         draw_list->_VtxWritePtr[d].pos = ImVec2(ImLerp(i##corner.x, c##corner.x, px), i##corner.y);                                          \
         draw_list->_VtxWritePtr[d].uv = use_alternative_uvs ?                                                                                \
@@ -3050,7 +3040,6 @@ static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
         int spare_rect_id = -1; // The last rectangle ID we generated with a spare half
         for (unsigned int stroke_width_index = 0; stroke_width_index < max_thickness; stroke_width_index++)
         {
-            //const unsigned int index = stroke_width_index + (radius_index * ImFontAtlasRoundCornersMaxStrokeWidth);
             const int width = radius_index + 1 + pad * 2;
             const int height = radius_index + 1 + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING + pad * 2;
 

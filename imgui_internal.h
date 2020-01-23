@@ -2457,14 +2457,6 @@ namespace ImGui
 
 } // namespace ImGui
 
-// Note that stroke width increases effective radius, so (e.g.) a max radius circle will have to use the fallback path if stroke width is > 1
-const unsigned int          ImFontAtlasRoundCornersMaxSize = 32; // Maximum size of rounded corner texture to generate in fonts
-const unsigned int          ImFontAtlasRoundCornersMaxStrokeWidth = 5; // Maximum stroke width of rounded corner texture to generate in fonts
-// Bit mask for which stroke widths should have textures generated for them (the default of 0xD means widths 1, 2 and 4)
-// Only bits up to ImFontAtlasRoundCornersMaxStrokeWidth are considered, and bit 0 (stroke width 1) must always be set
-// Optimally there should be an odd number of bits set, as the texture packing packs the data in pairs, with one half of one pair being occupied by the filled texture
-const unsigned int          ImFontAtlasRoundCornersStrokeWidthMask = 0xD;
-
 // ImFontAtlas internals
 IMGUI_API bool              ImFontAtlasBuildWithStbTruetype(ImFontAtlas* atlas);
 IMGUI_API void              ImFontAtlasBuildInit(ImFontAtlas* atlas);
@@ -2474,6 +2466,14 @@ IMGUI_API void              ImFontAtlasBuildFinish(ImFontAtlas* atlas);
 IMGUI_API void              ImFontAtlasBuildRender1bppRectFromString(ImFontAtlas* atlas, int atlas_x, int atlas_y, int w, int h, const char* in_str, char in_marker_char, unsigned char in_marker_pixel_value);
 IMGUI_API void              ImFontAtlasBuildMultiplyCalcLookupTable(unsigned char out_table[256], float in_multiply_factor);
 IMGUI_API void              ImFontAtlasBuildMultiplyRectAlpha8(const unsigned char table[256], unsigned char* pixels, int x, int y, int w, int h, int stride);
+
+// Note that stroke width increases effective radius, so (e.g.) a max radius circle will have to use the fallback path if stroke width is > 1
+const int                   ImFontAtlasRoundCornersMaxSize = 32;        // Maximum size of rounded corner texture to generate in fonts
+const int                   ImFontAtlasRoundCornersMaxStrokeWidth = 5;  // Maximum stroke width of rounded corner texture to generate in fonts
+// Bit mask for which stroke widths should have textures generated for them (the default of 0xD means widths 1, 2 and 4)
+// Only bits up to ImFontAtlasRoundCornersMaxStrokeWidth are considered, and bit 0 (stroke width 1) must always be set
+// Optimally there should be an odd number of bits set, as the texture packing packs the data in pairs, with one half of one pair being occupied by the filled texture
+const int                   ImFontAtlasRoundCornersStrokeWidthMask = 0xD;
 
 //-----------------------------------------------------------------------------
 // [SECTION] Test Engine specific hooks (imgui_test_engine)
