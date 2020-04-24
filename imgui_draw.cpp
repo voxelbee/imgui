@@ -8,9 +8,11 @@ Index of this file:
 // [SECTION] STB libraries implementation
 // [SECTION] Style functions
 // [SECTION] ImDrawList
+// [SECTION] ImDrawList Shadow Primitives
 // [SECTION] ImDrawListSplitter
 // [SECTION] ImDrawData
 // [SECTION] Helpers ShadeVertsXXX functions
+// [SECTION] ImFontAtlasShadowTexConfig
 // [SECTION] ImFontConfig
 // [SECTION] ImFontAtlas
 // [SECTION] ImFontAtlas glyph ranges helpers
@@ -233,6 +235,7 @@ void ImGui::StyleColorsDark(ImGuiStyle* dst)
     colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
+    colors[ImGuiCol_WindowShadow]           = ImVec4(0.08f, 0.08f, 0.08f, 0.35f);
 }
 
 void ImGui::StyleColorsClassic(ImGuiStyle* dst)
@@ -293,6 +296,7 @@ void ImGui::StyleColorsClassic(ImGuiStyle* dst)
     colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
+    colors[ImGuiCol_WindowShadow]           = ImVec4(0.08f, 0.08f, 0.08f, 0.35f);
 }
 
 // Those light colors are better suited with a thicker font than the default one + FrameBorder
@@ -354,6 +358,7 @@ void ImGui::StyleColorsLight(ImGuiStyle* dst)
     colors[ImGuiCol_NavWindowingHighlight]  = ImVec4(0.70f, 0.70f, 0.70f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg]      = ImVec4(0.20f, 0.20f, 0.20f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg]       = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
+    colors[ImGuiCol_WindowShadow]           = ImVec4(0.08f, 0.08f, 0.08f, 0.35f);
 }
 
 //-----------------------------------------------------------------------------
@@ -368,6 +373,7 @@ ImDrawListSharedData::ImDrawListSharedData()
         const float a = ((float)i * 2 * IM_PI) / (float)IM_ARRAYSIZE(ArcFastVtx);
         ArcFastVtx[i] = ImVec2(ImCos(a), ImSin(a));
     }
+    ShadowRectId = -1;
 }
 
 void ImDrawListSharedData::SetCircleSegmentMaxError(float max_error)
@@ -1414,6 +1420,458 @@ void ImDrawList::AddImageRounded(ImTextureID user_texture_id, const ImVec2& p_mi
 
 
 //-----------------------------------------------------------------------------
+// [SECTION] ImDrawList Shadow Primitives
+//-----------------------------------------------------------------------------
+// - AddSubtractedRect() [Internal]
+// - ClipPolygonShape() [Internal]
+// - AddSubtractedRect() [Internal]
+// - AddRectShadow()
+//-----------------------------------------------------------------------------
+
+// Adds a rectangle (A) with another rectangle (B) subtracted from it (i.e. the portion of A covered by B is not drawn). Does not handle rounded corners (use the version that takes a convex polygon for that).
+static void AddSubtractedRect(ImDrawList* draw_list, const ImVec2& a_min, const ImVec2& a_max, const ImVec2& a_min_uv, const ImVec2& a_max_uv, ImVec2 b_min, ImVec2 b_max, ImU32 col)
+{
+    // Early out without drawing anything if A is zero-size
+    if ((a_min.x >= a_max.x) || (a_min.y >= a_max.y))
+        return;
+
+    // Early out without drawing anything if B covers A entirely
+    if ((a_min.x >= b_min.x) && (a_max.x <= b_max.x) && (a_min.y >= b_min.y) && (a_max.y <= b_max.y))
+        return;
+
+    // First clip the extents of B to A
+    b_min = ImMax(b_min, a_min);
+    b_max = ImMin(b_max, a_max);
+
+    if ((b_min.x >= b_max.x) || (b_min.y >= b_max.y))
+    {
+        // B is entirely outside A, so just draw A as-is
+        draw_list->PrimReserve(6, 4);
+        draw_list->PrimRectUV(a_min, a_max, a_min_uv, a_max_uv, col);
+        return;
+    }
+
+    // Otherwise we need to emit (up to) four quads to cover the visible area...
+    //
+    // Our layout looks like this (numbers are vertex indices, letters are quads):
+    //
+    // 0---8------9-----1
+    // |   |  B   |     |
+    // +   4------5     +
+    // | A |xxxxxx|  C  |
+    // |   |xxxxxx|     |
+    // +   7------6     +
+    // |   |  D   |     |
+    // 3---11-----10----2
+
+    const int max_verts = 12;
+    const int max_indices = 6 * 4; // At most four quads
+    draw_list->PrimReserve(max_indices, max_verts);
+
+    ImDrawIdx* idx_write = draw_list->_IdxWritePtr;
+    ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
+    ImDrawIdx idx = (ImDrawIdx)draw_list->_VtxCurrentIdx;
+
+    // Write vertices
+    vtx_write[0].pos = ImVec2(a_min.x, a_min.y); vtx_write[0].uv = ImVec2(a_min_uv.x, a_min_uv.y); vtx_write[0].col = col;
+    vtx_write[1].pos = ImVec2(a_max.x, a_min.y); vtx_write[1].uv = ImVec2(a_max_uv.x, a_min_uv.y); vtx_write[1].col = col;
+    vtx_write[2].pos = ImVec2(a_max.x, a_max.y); vtx_write[2].uv = ImVec2(a_max_uv.x, a_max_uv.y); vtx_write[2].col = col;
+    vtx_write[3].pos = ImVec2(a_min.x, a_max.y); vtx_write[3].uv = ImVec2(a_min_uv.x, a_max_uv.y); vtx_write[3].col = col;
+
+    const ImVec2 pos_to_uv_scale = (a_max_uv - a_min_uv) / (a_max - a_min); // Guaranteed never to be a /0 because we check for zero-size A above
+    const ImVec2 pos_to_uv_offset = (a_min_uv / pos_to_uv_scale) - a_min;
+
+    // Helper that generates an interpolated UV based on position
+#define LERP_UV(x_pos, y_pos) (ImVec2(((x_pos) + pos_to_uv_offset.x) * pos_to_uv_scale.x, ((y_pos) + pos_to_uv_offset.y) * pos_to_uv_scale.y))
+    vtx_write[4].pos = ImVec2(b_min.x, b_min.y); vtx_write[4].uv = LERP_UV(b_min.x, b_min.y); vtx_write[4].col = col;
+    vtx_write[5].pos = ImVec2(b_max.x, b_min.y); vtx_write[5].uv = LERP_UV(b_max.x, b_min.y); vtx_write[5].col = col;
+    vtx_write[6].pos = ImVec2(b_max.x, b_max.y); vtx_write[6].uv = LERP_UV(b_max.x, b_max.y); vtx_write[6].col = col;
+    vtx_write[7].pos = ImVec2(b_min.x, b_max.y); vtx_write[7].uv = LERP_UV(b_min.x, b_max.y); vtx_write[7].col = col;
+    vtx_write[8].pos = ImVec2(b_min.x, a_min.y); vtx_write[8].uv = LERP_UV(b_min.x, a_min.y); vtx_write[8].col = col;
+    vtx_write[9].pos = ImVec2(b_max.x, a_min.y); vtx_write[9].uv = LERP_UV(b_max.x, a_min.y); vtx_write[9].col = col;
+    vtx_write[10].pos = ImVec2(b_max.x, a_max.y); vtx_write[10].uv = LERP_UV(b_max.x, a_max.y); vtx_write[10].col = col;
+    vtx_write[11].pos = ImVec2(b_min.x, a_max.y); vtx_write[11].uv = LERP_UV(b_min.x, a_max.y); vtx_write[11].col = col;
+#undef LERP_UV
+    draw_list->_VtxWritePtr += 12;
+    draw_list->_VtxCurrentIdx += 12;
+
+    // Write indices for each quad (if it is visible)
+    if (b_min.x > a_min.x) // A
+    {
+        idx_write[0] = (ImDrawIdx)(idx + 0); idx_write[1] = (ImDrawIdx)(idx + 8); idx_write[2] = (ImDrawIdx)(idx + 11);
+        idx_write[3] = (ImDrawIdx)(idx + 0); idx_write[4] = (ImDrawIdx)(idx + 11); idx_write[5] = (ImDrawIdx)(idx + 3);
+        idx_write += 6;
+    }
+    if (b_min.y > a_min.y) // B
+    {
+        idx_write[0] = (ImDrawIdx)(idx + 8); idx_write[1] = (ImDrawIdx)(idx + 9); idx_write[2] = (ImDrawIdx)(idx + 5);
+        idx_write[3] = (ImDrawIdx)(idx + 8); idx_write[4] = (ImDrawIdx)(idx + 5); idx_write[5] = (ImDrawIdx)(idx + 4);
+        idx_write += 6;
+    }
+    if (a_max.x > b_max.x) // C
+    {
+        idx_write[0] = (ImDrawIdx)(idx + 9); idx_write[1] = (ImDrawIdx)(idx + 1); idx_write[2] = (ImDrawIdx)(idx + 2);
+        idx_write[3] = (ImDrawIdx)(idx + 9); idx_write[4] = (ImDrawIdx)(idx + 2); idx_write[5] = (ImDrawIdx)(idx + 10);
+        idx_write += 6;
+    }
+    if (a_max.y > b_max.y) // D
+    {
+        idx_write[0] = (ImDrawIdx)(idx + 7); idx_write[1] = (ImDrawIdx)(idx + 6); idx_write[2] = (ImDrawIdx)(idx + 10);
+        idx_write[3] = (ImDrawIdx)(idx + 7); idx_write[4] = (ImDrawIdx)(idx + 10); idx_write[5] = (ImDrawIdx)(idx + 11);
+        idx_write += 6;
+    }
+
+    const int used_indices = (int)(idx_write - draw_list->_IdxWritePtr);
+    draw_list->_IdxWritePtr = idx_write;
+    draw_list->PrimUnreserve(max_indices - used_indices, 0);
+}
+
+// Clip a polygonal shape to a rectangle, writing the results into dest_points. The number of points emitted is returned (may be zero if the polygon was entirely outside the rectangle, or the source polygon was not valid). dest_points may still be written to even if zero was returned.
+// allocated_dest_points should contain the number of allocated points in dest_points - in general this should be the number of source points + 4 to accommodate the worst case. If this is exceeded data will be truncated and -1 returned. Stack space work area is allocated based on this value so it shouldn't be too large.
+static int ClipPolygonShape(ImVec2* src_points, int num_src_points, ImVec2* dest_points, int allocated_dest_points, ImVec2 clip_rect_min, ImVec2 clip_rect_max)
+{
+    // Early-out with an empty result if clipping region is zero-sized
+    if ((clip_rect_max.x <= clip_rect_min.x) || (clip_rect_max.y <= clip_rect_min.y))
+        return 0;
+
+    // Early-out if there is no source geometry
+    if (num_src_points < 3)
+        return 0;
+
+    // The four clip planes here are indexed as:
+    // 0 = X-, 1 = X+, 2 = Y-, 3 = Y+
+    ImU8* outflags[2]; // Double-buffered flags for each vertex indicating which of the four clip planes it is outside of
+    outflags[0] = (ImU8*)alloca(2 * allocated_dest_points * sizeof(ImU8));
+    outflags[1] = outflags[0] + allocated_dest_points;
+
+    // Calculate initial outflags
+    ImU8 outflags_anded = 0xFF;
+    ImU8 outflags_ored = 0;
+    for (int point_idx = 0; point_idx < num_src_points; point_idx++)
+    {
+        const ImVec2 pos = src_points[point_idx];
+        const ImU8 point_outflags = (pos.x < clip_rect_min.x ? 1 : 0) | (pos.x > clip_rect_max.x ? 2 : 0) | (pos.y < clip_rect_min.y ? 4 : 0) | (pos.y > clip_rect_max.y ? 8 : 0);
+        outflags[0][point_idx] = point_outflags; // Writing to buffer 0
+        outflags_anded &= point_outflags;
+        outflags_ored |= point_outflags;
+    }
+    if (outflags_anded != 0) // Entirely clipped by any one plane, so nothing remains
+        return 0;
+
+    if (outflags_ored == 0) // Entirely within bounds, so trivial accept
+    {
+        if (allocated_dest_points < num_src_points)
+            return -1; // Not sure what the caller was thinking if this happens, but we should handle it gracefully
+
+        memcpy(dest_points, src_points, num_src_points * sizeof(ImVec2));
+        return num_src_points;
+    }
+
+    // Shape needs clipping
+    ImVec2* clip_buf[2]; // Double-buffered work area
+    clip_buf[0] = (ImVec2*)alloca(2 * allocated_dest_points * sizeof(ImVec2)); //-V630
+    clip_buf[1] = clip_buf[0] + allocated_dest_points;
+
+    memcpy(clip_buf[0], src_points, num_src_points * sizeof(ImVec2));
+    int clip_buf_size = num_src_points; // Number of vertices currently in the clip buffer
+
+    int read_buffer_idx = 0; // The index of the clip buffer/out-flags we are reading (0 or 1)
+
+    for (int clip_plane = 0; clip_plane < 4; clip_plane++) // 0 = X-, 1 = X+, 2 = Y-, 3 = Y+
+    {
+        const int clip_plane_bit = 1 << clip_plane; // Bit mask for our current plane in out-flags
+        if ((outflags_ored & clip_plane_bit) == 0)
+            continue; // All vertices are inside this plane, so no need to clip
+
+        ImVec2* read_vert = &clip_buf[read_buffer_idx][0]; // Clip buffer vertex we are currently reading
+        ImVec2* write_vert = &clip_buf[1 - read_buffer_idx][0]; // Clip buffer vertex we are currently writing
+        ImVec2* write_vert_end = write_vert + allocated_dest_points; // End of the write buffer
+        ImU8* read_outflags = &outflags[read_buffer_idx][0]; // Out-flag we are currently reading
+        ImU8* write_outflags = &outflags[1 - read_buffer_idx][0]; // Out-flag we are currently writing
+
+        // Keep track of the last vertex visited, initially the last in the list
+        ImVec2* last_vert = &read_vert[clip_buf_size - 1];
+        ImU8 last_outflags = read_outflags[clip_buf_size - 1];
+
+        for (int vert = 0; vert < clip_buf_size; vert++)
+        {
+            ImU8 current_outflags = *(read_outflags++);
+            bool out = (current_outflags & clip_plane_bit) != 0;
+            if (((current_outflags ^ last_outflags) & clip_plane_bit) == 0) // We haven't crossed the clip plane
+            {
+                if (!out)
+                {
+                    // Emit vertex as-is
+                    if (write_vert >= write_vert_end)
+                        return -1; // Ran out of buffer space, so abort
+                    *(write_vert++) = *read_vert;
+                    *(write_outflags++) = current_outflags;
+                }
+            }
+            else
+            {
+                // Emit a vertex at the intersection point
+                float t = 0.0f;
+                ImVec2 pos0 = *last_vert;
+                ImVec2 pos1 = *read_vert;
+                ImVec2 intersect_pos;
+                switch (clip_plane)
+                {
+                case 0: t = (clip_rect_min.x - pos0.x) / (pos1.x - pos0.x); intersect_pos = ImVec2(clip_rect_min.x, pos0.y + ((pos1.y - pos0.y) * t)); break; // X-
+                case 1: t = (clip_rect_max.x - pos0.x) / (pos1.x - pos0.x); intersect_pos = ImVec2(clip_rect_max.x, pos0.y + ((pos1.y - pos0.y) * t)); break; // X+
+                case 2: t = (clip_rect_min.y - pos0.y) / (pos1.y - pos0.y); intersect_pos = ImVec2(pos0.x + ((pos1.x - pos0.x) * t), clip_rect_min.y); break; // Y-
+                case 3: t = (clip_rect_max.y - pos0.y) / (pos1.y - pos0.y); intersect_pos = ImVec2(pos0.x + ((pos1.x - pos0.x) * t), clip_rect_max.y); break; // Y+
+                }
+
+                if (write_vert >= write_vert_end)
+                    return -1; // Ran out of buffer space, so abort
+
+                // Write new out-flags for the vertex we just emitted
+                *(write_vert++) = intersect_pos;
+                *(write_outflags++) = (intersect_pos.x < clip_rect_min.x ? 1 : 0) | (intersect_pos.x > clip_rect_max.x ? 2 : 0) | (intersect_pos.y < clip_rect_min.y ? 4 : 0) | (intersect_pos.y > clip_rect_max.y ? 8 : 0);
+
+                if (!out)
+                {
+                    // When coming back in, also emit the actual vertex
+                    if (write_vert >= write_vert_end)
+                        return -1; // Ran out of buffer space, so abort
+                    *(write_vert++) = *read_vert;
+                    *(write_outflags++) = current_outflags;
+                }
+
+                last_outflags = current_outflags;
+            }
+
+            last_vert = read_vert;
+            read_vert++; // Advance to next vertex
+        }
+
+        clip_buf_size = (int)(write_vert - &clip_buf[1 - read_buffer_idx][0]); // Update buffer size
+        read_buffer_idx = 1 - read_buffer_idx; // Swap buffers
+    }
+
+    if (clip_buf_size < 3)
+        return 0; // Nothing to return
+
+    // Copy results to output buffer, removing any redundant vertices
+    int num_out_verts = 0;
+    ImVec2 last_vert = clip_buf[read_buffer_idx][clip_buf_size - 1];
+    for (int i = 0; i < clip_buf_size; i++)
+    {
+        ImVec2 vert = clip_buf[read_buffer_idx][i];
+        if (ImLengthSqr(vert - last_vert) > 0.00001f)
+        {
+            dest_points[num_out_verts++] = vert;
+            last_vert = vert;
+        }
+    }
+
+    // Return size (IF this is still a valid shape)
+    return (num_out_verts > 2) ? num_out_verts : 0;
+}
+
+// Adds a rectangle (A) with a convex shape (B) subtracted from it (i.e. the portion of A covered by B is not drawn).
+static void AddSubtractedRect(ImDrawList* draw_list, const ImVec2& a_min, const ImVec2& a_max, const ImVec2& a_min_uv, const ImVec2& a_max_uv, ImVec2* b_points, int num_b_points, ImU32 col)
+{
+    // Early out without drawing anything if A is zero-size
+    if ((a_min.x >= a_max.x) || (a_min.y >= a_max.y))
+        return;
+
+    // First clip B to A
+    const int max_clipped_points = num_b_points + 4;
+    ImVec2* clipped_b_points = (ImVec2*)alloca(max_clipped_points * sizeof(ImVec2)); //-V630
+    const int num_clipped_points = ClipPolygonShape(b_points, num_b_points, clipped_b_points, max_clipped_points, a_min, a_max);
+    IM_ASSERT(num_clipped_points >= 0); // -1 would indicate max_clipped_points was too small, which shouldn't happen
+
+    b_points = clipped_b_points;
+    num_b_points = num_clipped_points;
+
+    if (num_clipped_points == 0)
+    {
+        // B is entirely outside A, so just draw A as-is
+        draw_list->PrimReserve(6, 4);
+        draw_list->PrimRectUV(a_min, a_max, a_min_uv, a_max_uv, col);
+    }
+    else
+    {
+        // We need to generate clipped geometry
+        // To do this we walk the inner polygon and connect each edge to one of the four corners of our rectangle based on the quadrant their normal points at
+        const int max_verts = num_b_points + 4; // Inner points plus the four corners
+        const int max_indices = (num_b_points * 3) + (4 * 3); // Worst case is one triangle per inner edge and then four filler triangles
+        draw_list->PrimReserve(max_indices, max_verts);
+
+        ImDrawIdx* idx_write = draw_list->_IdxWritePtr;
+        ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
+        ImDrawIdx inner_idx = (ImDrawIdx)draw_list->_VtxCurrentIdx; // Starting index for inner vertices
+
+        // Write inner vertices
+        const ImVec2 pos_to_uv_scale = (a_max_uv - a_min_uv) / (a_max - a_min); // Guaranteed never to be a /0 because we check for zero-size A above
+        const ImVec2 pos_to_uv_offset = (a_min_uv / pos_to_uv_scale) - a_min;
+
+        // Helper that generates an interpolated UV based on position
+#define LERP_UV(x_pos, y_pos) (ImVec2(((x_pos) + pos_to_uv_offset.x) * pos_to_uv_scale.x, ((y_pos) + pos_to_uv_offset.y) * pos_to_uv_scale.y))
+        for (int i = 0; i < num_b_points; i++)
+        {
+            vtx_write[i].pos = b_points[i];
+            vtx_write[i].uv = LERP_UV(b_points[i].x, b_points[i].y);
+            vtx_write[i].col = col;
+        }
+#undef LERP_UV
+
+        vtx_write += num_b_points;
+
+        // Write outer vertices
+        ImDrawIdx outer_idx = (ImDrawIdx)(inner_idx + num_b_points); // Starting index for outer vertices
+
+        ImVec2 outer_verts[4];
+        outer_verts[0] = ImVec2(a_min.x, a_min.y); // X- Y- (quadrant 0, top left)
+        outer_verts[1] = ImVec2(a_max.x, a_min.y); // X+ Y- (quadrant 1, top right)
+        outer_verts[2] = ImVec2(a_max.x, a_max.y); // X+ Y+ (quadrant 2, bottom right)
+        outer_verts[3] = ImVec2(a_min.x, a_max.y); // X- Y+ (quadrant 3, bottom left)
+
+        vtx_write[0].pos = outer_verts[0]; vtx_write[0].uv = ImVec2(a_min_uv.x, a_min_uv.y); vtx_write[0].col = col;
+        vtx_write[1].pos = outer_verts[1]; vtx_write[1].uv = ImVec2(a_max_uv.x, a_min_uv.y); vtx_write[1].col = col;
+        vtx_write[2].pos = outer_verts[2]; vtx_write[2].uv = ImVec2(a_max_uv.x, a_max_uv.y); vtx_write[2].col = col;
+        vtx_write[3].pos = outer_verts[3]; vtx_write[3].uv = ImVec2(a_min_uv.x, a_max_uv.y); vtx_write[3].col = col;
+
+        draw_list->_VtxCurrentIdx += num_b_points + 4;
+        draw_list->_VtxWritePtr += num_b_points + 4;
+
+        // Now walk the inner vertices in order
+        ImVec2 last_inner_vert = b_points[num_b_points - 1];
+        int last_inner_vert_idx = num_b_points - 1;
+        int last_outer_vert_idx = -1;
+        int first_outer_vert_idx = -1;
+
+        // Triangle-area based check for degenerate triangles
+        // Min area (0.1f) is doubled (* 2.0f) because we're calculating (area * 2) here
+#define IS_DEGENERATE(a, b, c) (ImFabs((((a).x * ((b).y - (c).y)) + ((b).x * ((c).y - (a).y)) + ((c).x * ((a).y - (b).y)))) < (0.1f * 2.0f))
+
+        // Check the winding order of the inner vertices using the sign of the triangle area, and set the outer vertex winding to match
+        int outer_vertex_winding = (((b_points[0].x * (b_points[1].y - b_points[2].y)) + (b_points[1].x * (b_points[2].y - b_points[0].y)) + (b_points[2].x * (b_points[0].y - b_points[1].y))) < 0.0f) ? -1 : 1;
+        for (int inner_vert_idx = 0; inner_vert_idx < num_b_points; inner_vert_idx++)
+        {
+            ImVec2 current_inner_vert = b_points[inner_vert_idx];
+
+            // Calculate normal (not actually normalized, as for our purposes here it doesn't need to be)
+            ImVec2 normal(current_inner_vert.y - last_inner_vert.y, -(current_inner_vert.x - last_inner_vert.x));
+
+            // Calculate the outer vertex index based on the quadrant the normal points at (0=top left, 1=top right, 2=bottom right, 3=bottom left)
+            int outer_vert_idx = (ImFabs(normal.x) > ImFabs(normal.y)) ? ((normal.x >= 0.0f) ? ((normal.y > 0.0f) ? 2 : 1) : ((normal.y > 0.0f) ? 3 : 0)) : ((normal.y >= 0.0f) ? ((normal.x > 0.0f) ? 2 : 3) : ((normal.x > 0.0f) ? 1 : 0));
+            ImVec2 outer_vert = outer_verts[outer_vert_idx];
+
+            // Write the main triangle (connecting the inner edge to the corner)
+            if (!IS_DEGENERATE(last_inner_vert, current_inner_vert, outer_vert))
+            {
+                idx_write[0] = (ImDrawIdx)(inner_idx + last_inner_vert_idx);
+                idx_write[1] = (ImDrawIdx)(inner_idx + inner_vert_idx);
+                idx_write[2] = (ImDrawIdx)(outer_idx + outer_vert_idx);
+                idx_write += 3;
+            }
+
+            // We don't initially know which outer vertex we are going to start from, so set that here when processing the first inner vertex
+            if (first_outer_vert_idx == -1)
+            {
+                first_outer_vert_idx = outer_vert_idx;
+                last_outer_vert_idx = outer_vert_idx;
+            }
+
+            // Now walk the outer edge and write any filler triangles needed (connecting outer edges to the inner vertex)
+            while (outer_vert_idx != last_outer_vert_idx)
+            {
+                int next_outer_vert_idx = (last_outer_vert_idx + outer_vertex_winding) & 3;
+                if (!IS_DEGENERATE(outer_verts[last_outer_vert_idx], outer_verts[next_outer_vert_idx], last_inner_vert))
+                {
+                    idx_write[0] = (ImDrawIdx)(outer_idx + last_outer_vert_idx);
+                    idx_write[1] = (ImDrawIdx)(outer_idx + next_outer_vert_idx);
+                    idx_write[2] = (ImDrawIdx)(inner_idx + last_inner_vert_idx);
+                    idx_write += 3;
+                }
+                last_outer_vert_idx = next_outer_vert_idx;
+            }
+
+            last_inner_vert = current_inner_vert;
+            last_inner_vert_idx = inner_vert_idx;
+        }
+
+        // Write remaining filler triangles for any un-traversed outer edges
+        if (first_outer_vert_idx != -1)
+        {
+            while (first_outer_vert_idx != last_outer_vert_idx)
+            {
+                int next_outer_vert_idx = (last_outer_vert_idx + outer_vertex_winding) & 3;
+                if (!IS_DEGENERATE(outer_verts[last_outer_vert_idx], outer_verts[next_outer_vert_idx], last_inner_vert))
+                {
+                    idx_write[0] = (ImDrawIdx)(outer_idx + last_outer_vert_idx);
+                    idx_write[1] = (ImDrawIdx)(outer_idx + next_outer_vert_idx);
+                    idx_write[2] = (ImDrawIdx)(inner_idx + last_inner_vert_idx);
+                    idx_write += 3;
+                }
+                last_outer_vert_idx = next_outer_vert_idx;
+            }
+        }
+#undef IS_DEGENERATE
+
+        int used_indices = (int)(idx_write - draw_list->_IdxWritePtr);
+        draw_list->_IdxWritePtr = idx_write;
+        draw_list->PrimUnreserve(max_indices - used_indices, 0);
+    }
+}
+
+void ImDrawList::AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding, ImDrawCornerFlags rounding_corners)
+{
+    if ((col & IM_COL32_A_MASK) == 0)
+        return;
+
+    ImVec2* inner_rect_points = NULL; // Points that make up the shape of the inner rectangle (used when it has rounded corners)
+    int num_inner_rect_points = 0;
+
+    // Generate a path describing the inner rectangle and copy it to our buffer
+    const bool is_rounded = (rounding > 0.0f) && (rounding_corners != ImDrawCornerFlags_None); // Do we have rounded corners?
+    if (is_rounded)
+    {
+        _Path.Size = 0;
+        PathRect(p_min, p_max, rounding, rounding_corners);
+        num_inner_rect_points = _Path.Size;
+        inner_rect_points = (ImVec2*)alloca(num_inner_rect_points * sizeof(ImVec2)); //-V630
+        memcpy(inner_rect_points, _Path.Data, num_inner_rect_points * sizeof(ImVec2));
+        _Path.Size = 0;
+    }
+
+    // Draw the relevant chunks of the texture (the texture is split into a 3x3 grid)
+    for (int x = 0; x < 3; x++)
+    {
+        for (int y = 0; y < 3; y++)
+        {
+            const int uv_index = x + (y + y + y); // y*3 formatted so as to ensure the compiler avoids an actual multiply
+            const ImVec4 uvs = _Data->ShadowRectUvs[uv_index];
+
+            ImVec2 draw_min, draw_max;
+            switch (x)
+            {
+            case 0: draw_min.x = p_min.x - shadow_thickness; draw_max.x = p_min.x; break;
+            case 1: draw_min.x = p_min.x; draw_max.x = p_max.x; break;
+            case 2: draw_min.x = p_max.x; draw_max.x = p_max.x + shadow_thickness; break;
+            }
+            switch (y)
+            {
+            case 0: draw_min.y = p_min.y - shadow_thickness; draw_max.y = p_min.y; break;
+            case 1: draw_min.y = p_min.y; draw_max.y = p_max.y; break;
+            case 2: draw_min.y = p_max.y; draw_max.y = p_max.y + shadow_thickness; break;
+            }
+
+            ImVec2 uv_min(uvs.x, uvs.y);
+            ImVec2 uv_max(uvs.z, uvs.w);
+            if (is_rounded)
+                AddSubtractedRect(this, draw_min + offset, draw_max + offset, uv_min, uv_max, inner_rect_points, num_inner_rect_points, col); // Complex path for rounded rectangles
+            else
+                AddSubtractedRect(this, draw_min + offset, draw_max + offset, uv_min, uv_max, p_min, p_max, col); // Simple fast path for non-rounded rectangles
+        }
+    }
+}
+
+
+//-----------------------------------------------------------------------------
 // [SECTION] ImDrawListSplitter
 //-----------------------------------------------------------------------------
 // FIXME: This may be a little confusing, trying to be a little too low-level/optimal instead of just doing vector swap..
@@ -1651,6 +2109,19 @@ void ImGui::ShadeVertsLinearUV(ImDrawList* draw_list, int vert_start_idx, int ve
 }
 
 //-----------------------------------------------------------------------------
+// [SECTION] ImFontAtlasShadowTexConfig
+//-----------------------------------------------------------------------------
+
+ImFontAtlasShadowTexConfig::ImFontAtlasShadowTexConfig()
+{
+    TexCornerSize = 16;
+    TexEdgeSize = 1;
+    TexFalloffPower = 4.8f;
+    TexDistanceFieldOffset = 3.8f;
+    TexBlur = true;
+}
+
+//-----------------------------------------------------------------------------
 // [SECTION] ImFontConfig
 //-----------------------------------------------------------------------------
 
@@ -1743,6 +2214,7 @@ ImFontAtlas::ImFontAtlas()
     TexUvScale = ImVec2(0.0f, 0.0f);
     TexUvWhitePixel = ImVec2(0.0f, 0.0f);
     PackIdMouseCursors = PackIdLines = -1;
+    ShadowRectId = -1;
 }
 
 ImFontAtlas::~ImFontAtlas()
@@ -1771,6 +2243,7 @@ void    ImFontAtlas::ClearInputData()
     ConfigData.clear();
     CustomRects.clear();
     PackIdMouseCursors = PackIdLines = -1;
+    ShadowRectId = -1;
 }
 
 void    ImFontAtlas::ClearTexData()
@@ -2444,6 +2917,157 @@ static void ImFontAtlasBuildRenderLinesTexData(ImFontAtlas* atlas)
     }
 }
 
+// Register the rectangles we need for the rounded corner images
+static void ImFontAtlasBuildRegisterShadowCustomRects(ImFontAtlas* atlas)
+{
+    if (atlas->ShadowRectId >= 0)
+        return;
+
+    // The actual size we want to reserve, including padding
+    const ImFontAtlasShadowTexConfig* shadow_cfg = &atlas->ShadowTexConfig;
+    const unsigned int effective_size = shadow_cfg->CalcTexSize() + shadow_cfg->GetPadding();
+    atlas->ShadowRectId = atlas->AddCustomRectRegular(effective_size, effective_size);
+}
+
+// Calculates the signed distance from samplePos to the nearest point on the rectangle defined by rectMin-rectMax
+static float DistanceFromRectangle(ImVec2 samplePos, ImVec2 rectMin, ImVec2 rectMax)
+{
+    ImVec2 rect_centre = (rectMin + rectMax) * 0.5f;
+    ImVec2 rect_half_size = (rectMax - rectMin) * 0.5f;
+
+    ImVec2 local_sample_pos = samplePos - rect_centre;
+
+    ImVec2 axis_dist = ImVec2(ImFabs(local_sample_pos.x), ImFabs(local_sample_pos.y)) - rect_half_size;
+
+    float out_dist = ImLength(ImVec2(ImMax(axis_dist.x, 0.0f), ImMax(axis_dist.y, 0.0f)), 0.00001f);
+    float in_dist = ImMin(ImMax(axis_dist.x, axis_dist.y), 0.0f);
+
+    return out_dist + in_dist;
+}
+
+// Perform a single Gaussian blur pass with a fixed kernel size and sigma
+static void GaussianBlurPass(float* src, float* dest, int size, bool horizontal)
+{
+    // See http://dev.theomader.com/gaussian-kernel-calculator/
+    const float coefficients[] = { 0.0f, 0.0f, 0.000003f, 0.000229f, 0.005977f, 0.060598f, 0.24173f, 0.382925f, 0.24173f, 0.060598f, 0.005977f, 0.000229f, 0.000003f, 0.0f, 0.0f };
+    const int kernel_size = IM_ARRAYSIZE(coefficients);
+
+    int sample_step = horizontal ? 1 : size;
+
+    float* read_ptr = src;
+    float* write_ptr = dest;
+
+    for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+        {
+            float result = 0;
+            int current_offset = (horizontal ? x : y) - ((kernel_size - 1) >> 1);
+            float* sample_ptr = read_ptr - (((kernel_size - 1) >> 1) * sample_step);
+            for (int j = 0; j < kernel_size; j++)
+            {
+                if ((current_offset >= 0) && (current_offset < size))
+                    result += (*sample_ptr) * coefficients[j];
+                current_offset++;
+                sample_ptr += sample_step;
+            }
+            read_ptr++;
+            *(write_ptr++) = result;
+        }
+}
+
+// Perform an in-place Gaussian blur of a square array of floats with a fixed kernel size and sigma
+// Uses a stack allocation for the temporary data so potentially dangerous with large size values
+static void GaussianBlur(float* data, int size)
+{
+    // Do two passes, one from data into temp and then the second back to data again
+    float* temp = (float*)alloca(size * size * sizeof(float));
+    GaussianBlurPass(data, temp, size, true);
+    GaussianBlurPass(temp, data, size, false);
+}
+
+// Generate the actual pixel data for rounded corners in the atlas
+static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
+{
+    IM_ASSERT(atlas->TexPixelsAlpha8 != NULL);
+    IM_ASSERT(atlas->ShadowRectId >= 0);
+
+    // Because of the blur, we have to generate the full 3x3 texture here, and then we chop that down to just the 2x2 section we need later.
+    // 'size' correspond to the our 3x3 size, whereas 'shadow_tex_size' correspond to our 2x2 version where duplicate mirrored corners are not stored.
+    const ImFontAtlasShadowTexConfig* shadow_cfg = &atlas->ShadowTexConfig;
+    const int size = shadow_cfg->TexCornerSize + shadow_cfg->TexEdgeSize + shadow_cfg->TexCornerSize;
+    const int corner_size = shadow_cfg->TexCornerSize;
+    const int edge_size = shadow_cfg->TexEdgeSize;
+
+    // The bounds of the rectangle we are generating the shadow from
+    const ImVec2 shadow_rect_min((float)corner_size, (float)corner_size);
+    const ImVec2 shadow_rect_max((float)(corner_size + edge_size), (float)(corner_size + edge_size));
+
+    // Render the texture
+    ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectId];
+
+    // Remove the padding we added
+    const int padding = shadow_cfg->GetPadding();
+    r.X += (unsigned short)padding;
+    r.Y += (unsigned short)padding;
+    r.Width -= (unsigned short)padding * 2;
+    r.Height -= (unsigned short)padding * 2;
+
+    // We draw the actual texture content by evaluating the distance field for the inner rectangle
+    // Generate distance field
+    float* tex_data = (float*)alloca(size * size * sizeof(float));
+    for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+        {
+            float dist = DistanceFromRectangle(ImVec2((float)x, (float)y), shadow_rect_min, shadow_rect_max);
+            float alpha = 1.0f - ImMin(ImMax(dist + shadow_cfg->TexDistanceFieldOffset, 0.0f) / ImMax(shadow_cfg->TexCornerSize + shadow_cfg->TexDistanceFieldOffset, 0.001f), 1.0f);
+            alpha = ImPow(alpha, shadow_cfg->TexFalloffPower);  // Apply power curve to give a nicer falloff
+            tex_data[x + (y * size)] = alpha;
+        }
+
+    // Blur
+    if (shadow_cfg->TexBlur)
+        GaussianBlur(tex_data, size);
+
+    // Copy to texture, truncating to the actual required texture size (the bottom/right of the source data is chopped off, as we don't need it - see below). The truncated size is essentially the top 2x2 of our data, plus a little bit of padding for sampling.
+    const int tex_w = atlas->TexWidth;
+    const int shadow_tex_size = shadow_cfg->CalcTexSize();
+    for (int y = 0; y < shadow_tex_size; y++)
+        for (int x = 0; x < shadow_tex_size; x++)
+        {
+            const float alpha = tex_data[x + (y * size)];
+            const unsigned int offset = (int)(r.X + x) + (int)(r.Y + y) * tex_w;
+            atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * alpha);
+        }
+
+    // Generate UVs for each of the nine sections, which are arranged in a 3x3 grid starting from 0 in the top-left and going across then down
+    for (int i = 0; i < 9; i++)
+    {
+        ImFontAtlasCustomRect sub_rect = r;
+
+        // The third row/column of the 3x3 grid are generated by flipping the appropriate chunks of the upper 2x2 grid.
+        bool flip_h = false; // Do we need to flip the UVs horizontally?
+        bool flip_v = false; // Do we need to flip the UVs vertically?
+
+        switch (i % 3)
+        {
+        case 0: sub_rect.Width = (unsigned short)corner_size; break;
+        case 1: sub_rect.X += (unsigned short)corner_size; sub_rect.Width = (unsigned short)edge_size; break;
+        case 2: sub_rect.Width = (unsigned short)corner_size; flip_h = true; break;
+        }
+
+        switch (i / 3)
+        {
+        case 0: sub_rect.Height = (unsigned short)corner_size; break;
+        case 1: sub_rect.Y += (unsigned short)corner_size; sub_rect.Height = (unsigned short)edge_size; break;
+        case 2: sub_rect.Height = (unsigned short)corner_size; flip_v = true; break;
+        }
+
+        ImVec2 uv0, uv1;
+        atlas->CalcCustomRectUV(&sub_rect, &uv0, &uv1);
+        atlas->ShadowRectUvs[i] = ImVec4(flip_h ? uv1.x : uv0.x, flip_v ? uv1.y : uv0.y, flip_h ? uv0.x : uv1.x, flip_v ? uv0.y : uv1.y);
+    }
+}
+
 // Note: this is called / shared by both the stb_truetype and the FreeType builder
 void ImFontAtlasBuildInit(ImFontAtlas* atlas)
 {
@@ -2463,6 +3087,8 @@ void ImFontAtlasBuildInit(ImFontAtlas* atlas)
         if (!(atlas->Flags & ImFontAtlasFlags_NoBakedLines))
             atlas->PackIdLines = atlas->AddCustomRectRegular(IM_DRAWLIST_TEX_LINES_WIDTH_MAX + 2, IM_DRAWLIST_TEX_LINES_WIDTH_MAX + 1);
     }
+
+    ImFontAtlasBuildRegisterShadowCustomRects(atlas);
 }
 
 // This is called/shared by both the stb_truetype and the FreeType builder.
@@ -2472,6 +3098,7 @@ void ImFontAtlasBuildFinish(ImFontAtlas* atlas)
     IM_ASSERT(atlas->TexPixelsAlpha8 != NULL);
     ImFontAtlasBuildRenderDefaultTexData(atlas);
     ImFontAtlasBuildRenderLinesTexData(atlas);
+    ImFontAtlasBuildRenderShadowTexData(atlas);
 
     // Register custom rectangle glyphs
     for (int i = 0; i < atlas->CustomRects.Size; i++)

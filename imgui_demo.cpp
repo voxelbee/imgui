@@ -5830,6 +5830,22 @@ void ImGui::ShowStyleEditor(ImGuiStyle* ref)
             ImGui::EndTabItem();
         }
 
+        if (ImGui::BeginTabItem("Shadows"))
+        {
+            ImGui::Text("Window shadows:");
+            ImGui::ColorEdit4("Color", (float*)&style.Colors[ImGuiCol_WindowShadow], ImGuiColorEditFlags_AlphaBar);
+            ImGui::SameLine();
+            HelpMarker("Same as 'WindowShadow' in Colors tab.");
+
+            ImGui::SliderFloat("Size", &style.WindowShadowSize, 0.0f, 128.0f, "%.1f");
+            ImGui::SameLine();
+            HelpMarker("Set shadow size to zero to disable shadows.");
+            ImGui::SliderFloat("Offset distance", &style.WindowShadowOffsetDist, 0.0f, 64.0f, "%.0f");
+            ImGui::SliderAngle("Offset angle", &style.WindowShadowOffsetAngle);
+
+            ImGui::EndTabItem();
+        }
+
         ImGui::EndTabBar();
     }
 
