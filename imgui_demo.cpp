@@ -444,6 +444,7 @@ void ImGui::ShowDemoWindow(bool* p_open)
             ImGui::CheckboxFlags("io.BackendFlags: HasMouseCursors",      &backend_flags, ImGuiBackendFlags_HasMouseCursors);
             ImGui::CheckboxFlags("io.BackendFlags: HasSetMousePos",       &backend_flags, ImGuiBackendFlags_HasSetMousePos);
             ImGui::CheckboxFlags("io.BackendFlags: RendererHasVtxOffset", &backend_flags, ImGuiBackendFlags_RendererHasVtxOffset);
+            ImGui::CheckboxFlags("io.BackendFlags: RendererHasTexReload", &backend_flags, ImGuiBackendFlags_RendererHasTexReload);
             ImGui::TreePop();
             ImGui::Separator();
         }
@@ -5842,6 +5843,34 @@ void ImGui::ShowStyleEditor(ImGuiStyle* ref)
             HelpMarker("Set shadow size to zero to disable shadows.");
             ImGui::SliderFloat("Offset distance", &style.WindowShadowOffsetDist, 0.0f, 64.0f, "%.0f");
             ImGui::SliderAngle("Offset angle", &style.WindowShadowOffsetAngle);
+
+            // FIXME-SHADOWS: Revert ref breaks (doesn't call StyleUpdateTexture)
+            ImGuiIO& io = ImGui::GetIO();
+            ImGuiStyleShadowTexConfig* shadow_cfg = &style.ShadowTexConfig;
+            ImGui::Spacing();
+            ImGui::Text("Shadow Texture");
+            ImGui::SameLine();
+            HelpMarker("These settings can only be edited after initialization if the rendering back-end implements ImGuiBackendFlags_RendererHasTexReload.");
+
+            // Because editing these parameters after initialization requires font atlas reloading, disable them if the back-end does not support it
+            const bool editing_allowed = (io.BackendFlags & ImGuiBackendFlags_RendererHasTexReload) != 0;
+            if (!editing_allowed)
+            {
+                ImGui::TextWrapped("Error: Rendering back-end needs to support ImGuiBackendFlags_RendererHasTexReload in order to be able to change settings at runtime!");
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, style.Alpha * 0.5f);
+            }
+
+            bool need_rebuild = false;
+            need_rebuild |= ImGui::SliderInt("Corner size", &shadow_cfg->TexCornerSize, 4, 128);
+            need_rebuild |= ImGui::SliderInt("Edge size", &shadow_cfg->TexEdgeSize, 1, 128);
+            need_rebuild |= ImGui::SliderFloat("Falloff power", &shadow_cfg->TexFalloffPower, 0.1f, 8.0f, "%.2f");
+            need_rebuild |= ImGui::SliderFloat("Distance field offset", &shadow_cfg->TexDistanceFieldOffset, -16.0f, 16.0f, "%.2f");
+            need_rebuild |= ImGui::Checkbox("Blur texture", &shadow_cfg->TexBlur);
+
+            if (!editing_allowed)
+                ImGui::PopStyleVar();
+            if (need_rebuild && editing_allowed)
+                ImGui::StyleUpdateTexture();
 
             ImGui::EndTabItem();
         }

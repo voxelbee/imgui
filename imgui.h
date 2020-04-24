@@ -55,6 +55,7 @@ Index of this file:
 
 // Includes
 #include <float.h>                  // FLT_MIN, FLT_MAX
+#include <limits.h>                 // INT_MAX
 #include <stdarg.h>                 // va_list, va_start, va_end
 #include <stddef.h>                 // ptrdiff_t, NULL
 #include <string.h>                 // memset, memmove, memcpy, strlen, strchr, strcpy, strcmp
@@ -281,6 +282,7 @@ namespace ImGui
     IMGUI_API void          StyleColorsDark(ImGuiStyle* dst = NULL);    // new, recommended style (default)
     IMGUI_API void          StyleColorsClassic(ImGuiStyle* dst = NULL); // classic imgui style
     IMGUI_API void          StyleColorsLight(ImGuiStyle* dst = NULL);   // best used with borders and a custom, thicker font
+    IMGUI_API void          StyleUpdateTexture();                       // Update the texture atlas for new style parameters. This needs to be called if you change a parameter (e.g. shadow texture settings) that requires it. If called during a frame it will flag the texture for updating at the end of the frame (as the texture cannot change mid-frame). If rendering back-end does not support ImGuiBackendFlags_RendererHasTexReload, then this function can only be used prior to the texture being built for the first time.
 
     // Windows
     // - Begin() = push window to the stack and start appending to it. End() = pop window from the stack.
@@ -1335,7 +1337,8 @@ enum ImGuiBackendFlags_
     ImGuiBackendFlags_HasGamepad            = 1 << 0,   // Backend Platform supports gamepad and currently has one connected.
     ImGuiBackendFlags_HasMouseCursors       = 1 << 1,   // Backend Platform supports honoring GetMouseCursor() value to change the OS cursor shape.
     ImGuiBackendFlags_HasSetMousePos        = 1 << 2,   // Backend Platform supports io.WantSetMousePos requests to reposition the OS mouse position (only used if ImGuiConfigFlags_NavEnableSetMousePos is set).
-    ImGuiBackendFlags_RendererHasVtxOffset  = 1 << 3    // Backend Renderer supports ImDrawCmd::VtxOffset. This enables output of large meshes (64K+ vertices) while still using 16-bit indices.
+    ImGuiBackendFlags_RendererHasVtxOffset  = 1 << 3,   // Backend Renderer supports ImDrawCmd::VtxOffset. This enables output of large meshes (64K+ vertices) while still using 16-bit indices.
+    ImGuiBackendFlags_RendererHasTexReload  = 1 << 4    // Backend Renderer checks IsDirty() on the font atlas texture after EndFrame()/Render() and reupload the texture to GPU if required.
 };
 
 // Enumeration for PushStyleColor() / PopStyleColor()
@@ -1641,6 +1644,24 @@ struct ImVector
     inline int          index_from_ptr(const T* it) const   { IM_ASSERT(it >= Data && it < Data + Size); const ptrdiff_t off = it - Data; return (int)off; }
 };
 
+// Shadow Texture baking config
+// This is part of ImGuiStyle, but kept separate to make future support for multiple simultaneous shadow texture styles easier to implement.
+struct ImGuiStyleShadowTexConfig
+{
+    int     TexCornerSize;          // Size of the corner areas.
+    int     TexEdgeSize;            // Size of the edge areas (and by extension the center). Changing this is normally unnecessary.
+    float   TexFalloffPower;        // The power factor for the shadow falloff curve.
+    float   TexDistanceFieldOffset; // How much to offset the distance field by (allows over/under-shadowing, potentially useful for accommodating rounded corners on the "casting" shape).
+    bool    TexBlur;                // Do we want to Gaussian blur the shadow texture?
+
+    IMGUI_API ImGuiStyleShadowTexConfig();
+    int     GetRectTexPadding() const   { return 2; }                                                   // Number of pixels of padding to add to the rectangular texture to avoid sampling artifacts at the edges.
+    int     CalcRectTexSize() const     { return TexCornerSize + TexEdgeSize + GetRectTexPadding(); }   // The size of the texture area required for the actual 2x2 rectangle shadow texture (after the redundant corners have been removed). Padding is required here to avoid sampling artifacts at the edge adjoining the removed corners.    int     CalcConvexTexWidth() const;                                                                // The width of the texture area required for the convex shape shadow texture.
+    int     GetConvexTexPadding() const { return 8; }                                                   // Number of pixels of padding to add to the convex shape texture to avoid sampling artifacts at the edges. This also acts as padding for the expanded corner triangles.
+    int     CalcConvexTexWidth() const;                                                                 // The width of the texture area required for the convex shape shadow texture.
+    int     CalcConvexTexHeight() const;                                                                // The height of the texture area required for the convex shape shadow texture.
+};
+
 //-----------------------------------------------------------------------------
 // ImGuiStyle
 // You may modify the ImGui::GetStyle() main instance during initialization and before NewFrame().
@@ -1692,6 +1713,7 @@ struct ImGuiStyle
     float       WindowShadowSize;           // Size (in pixels) of window shadows. Set this to zero to disable shadows.
     float       WindowShadowOffsetDist;     // Offset distance (in pixels) of window shadows from casting window.
     float       WindowShadowOffsetAngle;    // Offset angle of window shadows from casting window (0.0f = left, 0.5f*PI = bottom, 1.0f*PI = right, 1.5f*PI = top).
+    ImGuiStyleShadowTexConfig ShadowTexConfig; // Configuration for shadow texture - changing this after the initial setup requires that the backend supports font texture rebuilding.
     ImVec4      Colors[ImGuiCol_COUNT];
 
     IMGUI_API ImGuiStyle();
@@ -2471,23 +2493,6 @@ struct ImDrawData
 // Font and Atlas API (ImFontConfig, ImFontGlyph, ImFontAtlasFlags, ImFontAtlas, ImFontGlyphRangesBuilder, ImFont)
 //-----------------------------------------------------------------------------
 
-// [Internal] Shadow texture baking config
-struct ImFontAtlasShadowTexConfig
-{
-    int     TexCornerSize;          // Size of the corner areas.
-    int     TexEdgeSize;            // Size of the edge areas (and by extension the center). Changing this is normally unnecessary.
-    float   TexFalloffPower;        // The power factor for the shadow falloff curve.
-    float   TexDistanceFieldOffset; // How much to offset the distance field by (allows over/under-shadowing, potentially useful for accommodating rounded corners on the "casting" shape).
-    bool    TexBlur;                // Do we want to Gaussian blur the shadow texture?
-
-    IMGUI_API ImFontAtlasShadowTexConfig();
-    int     GetRectTexPadding() const   { return 2; }                                                   // Number of pixels of padding to add to the rectangular texture to avoid sampling artifacts at the edges.
-    int     CalcRectTexSize() const     { return TexCornerSize + TexEdgeSize + GetRectTexPadding(); }   // The size of the texture area required for the actual 2x2 rectangle shadow texture (after the redundant corners have been removed). Padding is required here to avoid sampling artifacts at the edge adjoining the removed corners.    int     CalcConvexTexWidth() const;                                                                // The width of the texture area required for the convex shape shadow texture.
-    int     GetConvexTexPadding() const { return 8; }                                                   // Number of pixels of padding to add to the convex shape texture to avoid sampling artifacts at the edges. This also acts as padding for the expanded corner triangles.
-    int     CalcConvexTexWidth() const;                                                                 // The width of the texture area required for the convex shape shadow texture.
-    int     CalcConvexTexHeight() const;                                                                // The height of the texture area required for the convex shape shadow texture.
-};
-
 struct ImFontConfig
 {
     void*           FontData;               //          // TTF/OTF data
@@ -2592,6 +2597,7 @@ struct ImFontAtlas
     IMGUI_API ImFont*           AddFontFromMemoryCompressedTTF(const void* compressed_font_data, int compressed_font_size, float size_pixels, const ImFontConfig* font_cfg = NULL, const ImWchar* glyph_ranges = NULL); // 'compressed_font_data' still owned by caller. Compress with binary_to_compressed_c.cpp.
     IMGUI_API ImFont*           AddFontFromMemoryCompressedBase85TTF(const char* compressed_font_data_base85, float size_pixels, const ImFontConfig* font_cfg = NULL, const ImWchar* glyph_ranges = NULL);              // 'compressed_font_data_base85' still owned by caller. Compress with binary_to_compressed_c.cpp with -base85 parameter.
     IMGUI_API void              ClearInputData();           // Clear input data (all ImFontConfig structures including sizes, TTF data, glyph ranges, etc.) = all the data used to build the texture and fonts.
+    IMGUI_API void              ClearCustomRectData();      // Clear custom rectangle data (for when parameters that affect custom rectangles change). Automatically done by ClearInputData().
     IMGUI_API void              ClearTexData();             // Clear output texture data (CPU side). Saves RAM once the texture has been copied to graphics memory.
     IMGUI_API void              ClearFonts();               // Clear output font data (glyphs storage, UV coordinates).
     IMGUI_API void              Clear();                    // Clear all input and output.
@@ -2601,9 +2607,10 @@ struct ImFontAtlas
     // The pitch is always = Width * BytesPerPixels (1 or 4)
     // Building in RGBA32 format is provided for convenience and compatibility, but note that unless you manually manipulate or copy color data into
     // the texture (e.g. when using the AddCustomRect*** api), then the RGB pixels emitted will always be white (~75% of memory/bandwidth waste.
-    IMGUI_API bool              Build();                    // Build pixels data. This is called automatically for you by the GetTexData*** functions.
-    IMGUI_API void              GetTexDataAsAlpha8(unsigned char** out_pixels, int* out_width, int* out_height, int* out_bytes_per_pixel = NULL);  // 1 byte per-pixel
-    IMGUI_API void              GetTexDataAsRGBA32(unsigned char** out_pixels, int* out_width, int* out_height, int* out_bytes_per_pixel = NULL);  // 4 bytes-per-pixel
+    IMGUI_API bool              Build(int* out_dirty_x = NULL, int* out_dirty_y = NULL, int* out_dirty_width = NULL, int* out_dirty_height = NULL); // Build pixels data. This is called automatically for you by the GetTexData*** functions. Returns the dirty region of the texture (i.e. the region that has changed since the last call to Build()).
+    IMGUI_API bool              IsDirty(); // Returns true if the font needs to be (re-)built. User code should call GetTexData*** and update either the whole texture or dirty region as required.
+    IMGUI_API void              GetTexDataAsAlpha8(unsigned char** out_pixels, int* out_width, int* out_height, int* out_bytes_per_pixel = NULL, int* out_dirty_x = NULL, int* out_dirty_y = NULL, int* out_dirty_width = NULL, int* out_dirty_height = NULL);  // 1 byte per-pixel. Returns the dirty region since the last GetTexData*** or Build() call.
+    IMGUI_API void              GetTexDataAsRGBA32(unsigned char** out_pixels, int* out_width, int* out_height, int* out_bytes_per_pixel = NULL, int* out_dirty_x = NULL, int* out_dirty_y = NULL, int* out_dirty_width = NULL, int* out_dirty_height = NULL);  // 4 bytes-per-pixel. Returns the dirty region since the last GetTexData*** or Build() call.
     bool                        IsBuilt() const             { return Fonts.Size > 0 && (TexPixelsAlpha8 != NULL || TexPixelsRGBA32 != NULL); }
     void                        SetTexID(ImTextureID id)    { TexID = id; }
 
@@ -2640,6 +2647,9 @@ struct ImFontAtlas
     // [Internal]
     IMGUI_API void              CalcCustomRectUV(const ImFontAtlasCustomRect* rect, ImVec2* out_uv_min, ImVec2* out_uv_max) const;
     IMGUI_API bool              GetMouseCursorTexData(ImGuiMouseCursor cursor, ImVec2* out_offset, ImVec2* out_size, ImVec2 out_uv_border[2], ImVec2 out_uv_fill[2]);
+    IMGUI_API void              MarkDirty(int rect_x = 0, int rect_y = 0, int rect_width = INT_MAX, int rect_height = INT_MAX); // Mark a region (or the entire texture) as dirty
+    IMGUI_API void              MarkClean(); // Mark the whole texture as clean (i.e. remove any dirty region). Should be called after uploading any dirty region update.
+    IMGUI_API void              GetDirtyRegion(int* out_dirty_x = NULL, int* out_dirty_y = NULL, int* out_dirty_width = NULL, int* out_dirty_height = NULL); // Helper that gets the dirty region in the format user-side code receives it, clamped to the current texture size. Returns 0,0,0,0 if there is no dirty region.
 
     //-------------------------------------------
     // Members
@@ -2650,6 +2660,7 @@ struct ImFontAtlas
     ImTextureID                 TexID;              // User data to refer to the texture once it has been uploaded to user's graphic systems. It is passed back to you during rendering via the ImDrawCmd structure.
     int                         TexDesiredWidth;    // Texture width desired by user before Build(). Must be a power-of-two. If have many glyphs your graphics API have texture size restrictions you may want to increase texture width to decrease height.
     int                         TexGlyphPadding;    // Padding between glyphs within texture in pixels. Defaults to 1. If your rendering method doesn't rely on bilinear filtering you may set this to 0.
+    int                         DirtyRectLeft, DirtyRectTop, DirtyRectRight, DirtyRectBottom; // Dirty region (i.e. that which needs to be rebuilt). Boundaries are inclusive (i.e. pixels at X=Left and X=Right are both in the region, same with Y). Will be all -1 if there is no dirty region.
 
     // [Internal]
     // NB: Access texture data via GetTexData*() calls! Which will setup a default font for you.
@@ -2671,7 +2682,6 @@ struct ImFontAtlas
     // [Internal] Shadow data
     int                         ShadowRectIds[2];   // IDs of rect for shadow textures
     ImVec4                      ShadowRectUvs[10];  // UV coordinates for shadow textures, 9 for the rectangle shadows and the final entry for the convex shape shadows
-    ImFontAtlasShadowTexConfig  ShadowTexConfig;    // Shadow texture baking config
 
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     typedef ImFontAtlasCustomRect    CustomRect;         // OBSOLETED in 1.72+

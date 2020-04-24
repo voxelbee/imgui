@@ -7,12 +7,12 @@ Index of this file:
 
 // [SECTION] STB libraries implementation
 // [SECTION] Style functions
+// [SECTION] ImGuiStyleShadowTexConfig
 // [SECTION] ImDrawList
 // [SECTION] ImDrawList Shadow Primitives
 // [SECTION] ImDrawListSplitter
 // [SECTION] ImDrawData
 // [SECTION] Helpers ShadeVertsXXX functions
-// [SECTION] ImFontAtlasShadowTexConfig
 // [SECTION] ImFontConfig
 // [SECTION] ImFontAtlas
 // [SECTION] ImFontAtlas glyph ranges helpers
@@ -361,11 +361,29 @@ void ImGui::StyleColorsLight(ImGuiStyle* dst)
     colors[ImGuiCol_WindowShadow]           = ImVec4(0.08f, 0.08f, 0.08f, 0.35f);
 }
 
+// Flag that we need to update the built texture data
+void ImGui::StyleUpdateTexture()
+{
+    IM_ASSERT(GImGui != NULL && "No current context. Did you call ImGui::CreateContext() and ImGui::SetCurrentContext()?");
+
+    ImGuiContext& g = *GImGui;
+    IM_ASSERT(((g.IO.Fonts == NULL) || (!g.IO.Fonts->IsBuilt()) || (g.IO.BackendFlags & ImGuiBackendFlags_RendererHasTexReload)) && "ImGui::StyleUpdateTexture() can only be called prior to the first frame if the back-end does not support font atlas reloading");
+
+    if (g.WithinFrameScope) // If we are currently in a frame, defer doing anything until the end of the frame (as we can't update the texture mid-frame)
+    {
+        g.WantStyleUpdateTextureInEndFrame = true;
+        return;
+    }
+
+    if (g.IO.Fonts)
+        g.IO.Fonts->ClearCustomRectData();
+}
+
 //-----------------------------------------------------------------------------
-// [SECTION] ImFontAtlasShadowTexConfig
+// [SECTION] ImGuiStyleShadowTexConfig
 //-----------------------------------------------------------------------------
 
-ImFontAtlasShadowTexConfig::ImFontAtlasShadowTexConfig()
+ImGuiStyleShadowTexConfig::ImGuiStyleShadowTexConfig()
 {
     TexCornerSize = 16;
     TexEdgeSize = 1;
@@ -374,17 +392,18 @@ ImFontAtlasShadowTexConfig::ImFontAtlasShadowTexConfig()
     TexBlur = true;
 }
 
-int ImFontAtlasShadowTexConfig::CalcConvexTexWidth() const
+int ImGuiStyleShadowTexConfig::CalcConvexTexWidth() const
 {
     // We have to pad the texture enough that we don't go off the edges when we expand the corner triangles
     return (int)((TexCornerSize / ImCos(IM_PI * 0.25f)) + (GetConvexTexPadding() * 2));
 }
 
-int ImFontAtlasShadowTexConfig::CalcConvexTexHeight() const
+int ImGuiStyleShadowTexConfig::CalcConvexTexHeight() const
 {
     // We have to pad the texture enough that we don't go off the edges when we expand the corner triangles
     return (int)((TexCornerSize / ImCos(IM_PI * 0.25f)) + (GetConvexTexPadding() * 2));
 }
+
 
 //-----------------------------------------------------------------------------
 // [SECTION] ImDrawList
@@ -2491,6 +2510,10 @@ ImFontAtlas::ImFontAtlas()
     TexUvWhitePixel = ImVec2(0.0f, 0.0f);
     PackIdMouseCursors = PackIdLines = -1;
     ShadowRectIds[0] = ShadowRectIds[1] = -1;
+    DirtyRectLeft = 0; // Start entirely dirty
+    DirtyRectTop = 0;
+    DirtyRectRight = INT_MAX;
+    DirtyRectBottom = INT_MAX;
 }
 
 ImFontAtlas::~ImFontAtlas()
@@ -2517,9 +2540,17 @@ void    ImFontAtlas::ClearInputData()
             Fonts[i]->ConfigDataCount = 0;
         }
     ConfigData.clear();
+    ClearCustomRectData();
+    MarkDirty();
+}
+
+void    ImFontAtlas::ClearCustomRectData()
+{
+    IM_ASSERT(!Locked && "Cannot modify a locked ImFontAtlas between NewFrame() and EndFrame/Render()!");
     CustomRects.clear();
     PackIdMouseCursors = PackIdLines = -1;
     ShadowRectIds[0] = ShadowRectIds[1] = -1;
+    MarkDirty();
 }
 
 void    ImFontAtlas::ClearTexData()
@@ -2531,6 +2562,7 @@ void    ImFontAtlas::ClearTexData()
         IM_FREE(TexPixelsRGBA32);
     TexPixelsAlpha8 = NULL;
     TexPixelsRGBA32 = NULL;
+    MarkDirty();
 }
 
 void    ImFontAtlas::ClearFonts()
@@ -2539,6 +2571,7 @@ void    ImFontAtlas::ClearFonts()
     for (int i = 0; i < Fonts.Size; i++)
         IM_DELETE(Fonts[i]);
     Fonts.clear();
+    MarkDirty();
 }
 
 void    ImFontAtlas::Clear()
@@ -2548,14 +2581,81 @@ void    ImFontAtlas::Clear()
     ClearFonts();
 }
 
-void    ImFontAtlas::GetTexDataAsAlpha8(unsigned char** out_pixels, int* out_width, int* out_height, int* out_bytes_per_pixel)
+void    ImFontAtlas::MarkDirty(int rect_x, int rect_y, int rect_width, int rect_height)
+{
+    if ((rect_width < 1) || (rect_height < 1))
+        return; // Early out if the region is zero-sized
+
+    IM_ASSERT((rect_x >= 0) && (rect_y >= 0) && "Dirty rectangle cannot have a negative position");
+
+    int rect_right = rect_x + rect_width - 1;
+    int rect_bottom = rect_y + rect_height - 1;
+
+    if (DirtyRectLeft == -1)
+    {
+        // No existing dirty region
+        DirtyRectLeft = rect_x;
+        DirtyRectTop = rect_y;
+        DirtyRectRight = rect_right;
+        DirtyRectBottom = rect_bottom;
+    }
+    else
+    {
+        // Combine with existing region
+        DirtyRectLeft = ImMin(DirtyRectLeft, rect_x);
+        DirtyRectTop = ImMin(DirtyRectTop, rect_y);
+        DirtyRectRight = ImMax(DirtyRectRight, rect_right);
+        DirtyRectBottom = ImMax(DirtyRectBottom, rect_bottom);
+    }
+}
+
+void    ImFontAtlas::MarkClean()
+{
+    DirtyRectLeft = DirtyRectTop = DirtyRectRight = DirtyRectBottom = -1;
+}
+
+bool    ImFontAtlas::IsDirty()
+{
+    return (DirtyRectLeft >= 0);
+}
+
+void    ImFontAtlas::GetDirtyRegion(int* out_dirty_x, int* out_dirty_y, int* out_dirty_width, int* out_dirty_height)
+{
+    if (DirtyRectLeft < 0)
+    {
+        // Region is empty
+        if (out_dirty_x) *out_dirty_x = 0;
+        if (out_dirty_y) *out_dirty_y = 0;
+        if (out_dirty_width) *out_dirty_width = 0;
+        if (out_dirty_height) *out_dirty_height = 0;
+    }
+    else
+    {
+        // Clamp to our current texture size
+        int dirtyLeft = ImMin(DirtyRectLeft, TexWidth - 1);
+        int dirtyTop = ImMin(DirtyRectTop, TexHeight - 1);
+        int dirtyRight = ImMin(DirtyRectRight, TexWidth - 1);
+        int dirtyBottom = ImMin(DirtyRectBottom, TexHeight - 1);
+
+        if (out_dirty_x) *out_dirty_x = dirtyLeft;
+        if (out_dirty_y) *out_dirty_y = dirtyTop;
+        if (out_dirty_width) *out_dirty_width = (dirtyRight - dirtyLeft) + 1;
+        if (out_dirty_height) *out_dirty_height = (dirtyBottom - dirtyTop) + 1;
+    }
+}
+
+void    ImFontAtlas::GetTexDataAsAlpha8(unsigned char** out_pixels, int* out_width, int* out_height, int* out_bytes_per_pixel, int* out_dirty_x, int* out_dirty_y, int* out_dirty_width, int* out_dirty_height)
 {
     // Build atlas on demand
-    if (TexPixelsAlpha8 == NULL)
+    if (TexPixelsAlpha8 == NULL || IsDirty())
     {
         if (ConfigData.empty())
             AddFontDefault();
-        Build();
+        Build(out_dirty_x, out_dirty_y, out_dirty_width, out_dirty_height);
+    }
+    else
+    {
+        GetDirtyRegion(out_dirty_x, out_dirty_y, out_dirty_width, out_dirty_height); // Not calling Build() so retrieve the region (which will be empty) manually
     }
 
     *out_pixels = TexPixelsAlpha8;
@@ -2564,14 +2664,14 @@ void    ImFontAtlas::GetTexDataAsAlpha8(unsigned char** out_pixels, int* out_wid
     if (out_bytes_per_pixel) *out_bytes_per_pixel = 1;
 }
 
-void    ImFontAtlas::GetTexDataAsRGBA32(unsigned char** out_pixels, int* out_width, int* out_height, int* out_bytes_per_pixel)
+void    ImFontAtlas::GetTexDataAsRGBA32(unsigned char** out_pixels, int* out_width, int* out_height, int* out_bytes_per_pixel, int* out_dirty_x, int* out_dirty_y, int* out_dirty_width, int* out_dirty_height)
 {
     // Convert to RGBA32 format on demand
     // Although it is likely to be the most commonly used format, our font rendering is 1 channel / 8 bpp
-    if (!TexPixelsRGBA32)
+    if (TexPixelsRGBA32 == NULL || IsDirty())
     {
         unsigned char* pixels = NULL;
-        GetTexDataAsAlpha8(&pixels, NULL, NULL);
+        GetTexDataAsAlpha8(&pixels, NULL, NULL, NULL, out_dirty_x, out_dirty_y, out_dirty_width, out_dirty_height);
         if (pixels)
         {
             TexPixelsRGBA32 = (unsigned int*)IM_ALLOC((size_t)TexWidth * (size_t)TexHeight * 4);
@@ -2580,6 +2680,10 @@ void    ImFontAtlas::GetTexDataAsRGBA32(unsigned char** out_pixels, int* out_wid
             for (int n = TexWidth * TexHeight; n > 0; n--)
                 *dst++ = IM_COL32(255, 255, 255, (unsigned int)(*src++));
         }
+    }
+    else
+    {
+        GetDirtyRegion(out_dirty_x, out_dirty_y, out_dirty_width, out_dirty_height); // Not calling Build() so retrieve the region (which will be empty) manually
     }
 
     *out_pixels = (unsigned char*)TexPixelsRGBA32;
@@ -2616,6 +2720,7 @@ ImFont* ImFontAtlas::AddFont(const ImFontConfig* font_cfg)
 
     // Invalidate texture
     ClearTexData();
+    MarkDirty();
     return new_font_cfg.DstFont;
 }
 
@@ -2773,10 +2878,10 @@ bool ImFontAtlas::GetMouseCursorTexData(ImGuiMouseCursor cursor_type, ImVec2* ou
     return true;
 }
 
-bool    ImFontAtlas::Build()
+bool    ImFontAtlas::Build(int* out_dirty_x, int* out_dirty_y, int* out_dirty_width, int* out_dirty_height)
 {
     IM_ASSERT(!Locked && "Cannot modify a locked ImFontAtlas between NewFrame() and EndFrame/Render()!");
-    return ImFontAtlasBuildWithStbTruetype(this);
+    return ImFontAtlasBuildWithStbTruetype(this, out_dirty_x, out_dirty_y, out_dirty_width, out_dirty_height);
 }
 
 void    ImFontAtlasBuildMultiplyCalcLookupTable(unsigned char out_table[256], float in_brighten_factor)
@@ -2833,14 +2938,16 @@ static void UnpackBitVectorToFlatIndexList(const ImBitVector* in, ImVector<int>*
                     out->push_back((int)(((it - it_begin) << 5) + bit_n));
 }
 
-bool    ImFontAtlasBuildWithStbTruetype(ImFontAtlas* atlas)
+bool    ImFontAtlasBuildWithStbTruetype(ImFontAtlas* atlas, int* out_dirty_x, int* out_dirty_y, int* out_dirty_width, int* out_dirty_height)
 {
     IM_ASSERT(atlas->ConfigData.Size > 0);
+
+    // Clear custom rects so that they will get re-registered - this is arguably "wrong" in that it might make more sense to track when a related parameter has changed and only do this then, but given that right now at this point we're already rebuilding everything this is much simpler.
+    atlas->ClearCustomRectData();
 
     ImFontAtlasBuildInit(atlas);
 
     // Clear atlas
-    atlas->TexID = (ImTextureID)NULL;
     atlas->TexWidth = atlas->TexHeight = 0;
     atlas->TexUvScale = ImVec2(0.0f, 0.0f);
     atlas->TexUvWhitePixel = ImVec2(0.0f, 0.0f);
@@ -3082,6 +3189,16 @@ bool    ImFontAtlasBuildWithStbTruetype(ImFontAtlas* atlas)
         src_tmp_array[src_i].~ImFontBuildSrcData();
 
     ImFontAtlasBuildFinish(atlas);
+
+    // For now, because we rebuilt everything and don't know if items have moved, we need to dirty the entire texture
+    atlas->MarkDirty();
+
+    // Return dirty region
+    atlas->GetDirtyRegion(out_dirty_x, out_dirty_y, out_dirty_width, out_dirty_height);
+
+    // Mark the dirty region as clean
+    atlas->MarkClean();
+
     return true;
 }
 
@@ -3203,7 +3320,8 @@ static void ImFontAtlasBuildRegisterShadowCustomRects(ImFontAtlas* atlas)
     // ShadowRectIds[1] is the rectangle for convex shadows
 
     // The actual size we want to reserve, including padding
-    const ImFontAtlasShadowTexConfig* shadow_cfg = &atlas->ShadowTexConfig;
+    // FIXME-SHADOWS: Should not access ImGui style?
+    const ImGuiStyleShadowTexConfig* shadow_cfg = &GImGui->Style.ShadowTexConfig;
     const unsigned int effective_size = shadow_cfg->CalcRectTexSize() + shadow_cfg->GetRectTexPadding();
     atlas->ShadowRectIds[0] = atlas->AddCustomRectRegular(effective_size, effective_size);
     atlas->ShadowRectIds[1] = atlas->AddCustomRectRegular(shadow_cfg->CalcConvexTexWidth() + shadow_cfg->GetConvexTexPadding(), shadow_cfg->CalcConvexTexHeight() + shadow_cfg->GetConvexTexPadding());
@@ -3273,7 +3391,8 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
 
     // Because of the blur, we have to generate the full 3x3 texture here, and then we chop that down to just the 2x2 section we need later.
     // 'size' correspond to the our 3x3 size, whereas 'shadow_tex_size' correspond to our 2x2 version where duplicate mirrored corners are not stored.
-    const ImFontAtlasShadowTexConfig* shadow_cfg = &atlas->ShadowTexConfig;
+    // FIXME-SHADOWS: Should not access ImGui style?
+    const ImGuiStyleShadowTexConfig* shadow_cfg = &GImGui->Style.ShadowTexConfig;
 
     // The rectangular shadow texture
     {

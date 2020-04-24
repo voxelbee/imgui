@@ -4302,6 +4302,13 @@ void ImGui::EndFrame()
     g.IO.InputQueueCharacters.resize(0);
     memset(g.IO.NavInputs, 0, sizeof(g.IO.NavInputs));
 
+    // Perform style texture update if requested
+    if (g.WantStyleUpdateTextureInEndFrame)
+    {
+        StyleUpdateTexture();
+        g.WantStyleUpdateTextureInEndFrame = false;
+    }
+
     CallContextHooks(&g, ImGuiContextHookType_EndFramePost);
 }
 
