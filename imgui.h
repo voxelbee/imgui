@@ -1681,7 +1681,7 @@ struct ImGuiStyle
     bool        AntiAliasedLines;           // Enable anti-aliased lines/borders. Disable if you are really tight on CPU/GPU. Latched at the beginning of the frame (copied to ImDrawList).
     bool        AntiAliasedLinesUseTex;     // Enable anti-aliased lines/borders using textures where possible. Require backend to render with bilinear filtering. Latched at the beginning of the frame (copied to ImDrawList).
     bool        AntiAliasedFill;            // Enable anti-aliased edges around filled shapes (rounded rectangles, circles, etc.). Disable if you are really tight on CPU/GPU. Latched at the beginning of the frame (copied to ImDrawList).
-    bool        TexturedRoundCorners;       // Enable using textures instead of strokes to draw rounded corners/circles where possible.
+    bool        RoundCornersUseTex;         // Enable using textures instead of strokes to draw rounded corners/circles where possible.
     float       CurveTessellationTol;       // Tessellation tolerance when using PathBezierCurveTo() without a specific number of segments. Decrease for highly tessellated curves (higher quality, more polygons), increase to reduce quality.
     float       CircleSegmentMaxError;      // Maximum error (in pixels) allowed when using AddCircle()/AddCircleFilled() or drawing rounded corner rectangles with no explicit segment count specified. Decrease for higher quality but more geometry.
     ImVec4      Colors[ImGuiCol_COUNT];
@@ -2292,7 +2292,7 @@ enum ImDrawListFlags_
     ImDrawListFlags_AntiAliasedLinesUseTex  = 1 << 1,  // Enable anti-aliased lines/borders using textures when possible. Require backend to render with bilinear filtering.
     ImDrawListFlags_AntiAliasedFill         = 1 << 2,  // Enable anti-aliased edge around filled shapes (rounded rectangles, circles).
     ImDrawListFlags_AllowVtxOffset          = 1 << 3,  // Can emit 'VtxOffset > 0' to allow large meshes. Set when 'ImGuiBackendFlags_RendererHasVtxOffset' is enabled.
-    ImDrawListFlags_TexturedRoundCorners    = 1 << 4   // Enable using textures instead of strokes to draw rounded corners/circles where possible.
+    ImDrawListFlags_RoundCornersUseTex      = 1 << 4   // Enable using textures instead of strokes to draw rounded corners/circles where possible.
 };
 
 // Draw command list
