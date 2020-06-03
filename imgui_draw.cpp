@@ -4360,7 +4360,8 @@ bool ImGui::RenderWindowResizeGrip(ImDrawList* draw_list, const ImVec2& corner, 
     // - uv[0] is the mid-point from the corner towards the center of the circle (solid)
     // - uv[1] is a solid point on the edge of the circle
     // - uv[2] is the outer edge (blank, outside the circle)
-    const ImVec4& uvs = (*draw_list->_Data->TexRoundCornerData)[rad - 1].TexUvFilled;
+    const unsigned int index = (rad - 1) * ImFontAtlasRoundCornersMaxStrokeWidth;
+    const ImVec4& uvs = (*draw_list->_Data->TexRoundCornerData)[index].TexUvFilled;
     const ImVec2 uv[] =
     {
         ImVec2(ImLerp(uvs.x, uvs.z, 0.5f), ImLerp(uvs.y, uvs.w, 0.5f)),
