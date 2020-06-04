@@ -2497,11 +2497,11 @@ struct ImFontGlyphRangesBuilder
 // Data for texture-based rounded corners for a given radius
 struct ImFontRoundedCornerData
 {
-    ImVec4 TexUvFilled; // UV of filled round corner quad in the atlas (only valid when stroke width is 1)
-    ImVec4 TexUvStroked;  // UV of stroked round corner quad in the atlas
-    float ParametricStrokeWidth; // Pre-calculated value for stroke width divided by the radius
-    int RectId; // Rect ID in the atlas, or -1 if there is no data
-    bool StrokedUsesAlternateUVs; // True if stroked drawing should use the alternate (i.e. other corner) UVs
+    ImVec4      TexUvFilled;                // UV of filled round corner quad in the atlas (only valid when stroke width is 1)
+    ImVec4      TexUvStroked;               // UV of stroked round corner quad in the atlas
+    float       ParametricStrokeWidth;      // Pre-calculated value for stroke width divided by the radius
+    int         RectId;                     // Rect ID in the atlas, or -1 if there is no data
+    bool        StrokedUsesAlternateUVs;    // True if stroked drawing should use the alternate (i.e. other corner) UVs
 };
 
 // See ImFontAtlas::AddCustomRectXXX functions.

@@ -633,7 +633,6 @@ struct IMGUI_API ImDrawListSharedData
     ImU8            CircleSegmentCounts[64];    // Precomputed segment count for given radius (array index + 1) before we calculate it dynamically (to avoid calculation overhead)
     const ImVec4*   TexUvLines;                 // UV of anti-aliased lines in the atlas
 
-    // FIXME-ROUNDCORNERS: WIP + need to remove CircleVtx12 before PR
     ImVector<ImFontRoundedCornerData>* TexRoundCornerData; // Data for texture-based rounded corners, indexed by radius
 
     ImDrawListSharedData();
@@ -2470,11 +2469,11 @@ IMGUI_API void              ImFontAtlasBuildMultiplyRectAlpha8(const unsigned ch
 
 // Note that stroke width increases effective radius, so (e.g.) a max radius circle will have to use the fallback path if stroke width is > 1
 const int                   ImFontAtlasRoundCornersMaxSize = 32;        // Maximum size of rounded corner texture to generate in fonts
-const int                   ImFontAtlasRoundCornersMaxStrokeWidth = 5;  // Maximum stroke width of rounded corner texture to generate in fonts
-// Bit mask for which stroke widths should have textures generated for them (the default of 0xD means widths 1, 2 and 4)
+const int                   ImFontAtlasRoundCornersMaxStrokeWidth = 4;  // Maximum stroke width of rounded corner texture to generate in fonts
+// Bit mask for which stroke widths should have textures generated for them (the default of 0x0B means widths 1, 2 and 4)
 // Only bits up to ImFontAtlasRoundCornersMaxStrokeWidth are considered, and bit 0 (stroke width 1) must always be set
 // Optimally there should be an odd number of bits set, as the texture packing packs the data in pairs, with one half of one pair being occupied by the filled texture
-const int                   ImFontAtlasRoundCornersStrokeWidthMask = 0xD;
+const int                   ImFontAtlasRoundCornersStrokeWidthMask = 0x0B;
 
 //-----------------------------------------------------------------------------
 // [SECTION] Test Engine specific hooks (imgui_test_engine)
