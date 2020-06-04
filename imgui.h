@@ -2375,9 +2375,11 @@ struct ImDrawList
 
     // Shadows primitives
     // [BETA] API
-    // FIXME-SHADOWS: high-level api to draw shadow without a hole?
+    // - Add a shadow for a rectangular object, with min-max giving the object extents, and offset shifting the shadow. Rounding parameters refer to the object itself, not the shadow.
+    // - In the vast majority of cases, filled shadows are unnecessary and wasteful. We still provide the primitives for consistency and flexibility.
     #define IMGUI_HAS_SHADOWS 1
-    IMGUI_API void  AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding = 0.0f, ImDrawCornerFlags rounding_corners = ImDrawCornerFlags_All); // Add a shadow for a rectangular object, with min-max giving the object extents, and offset giving an offset to shift the shadow by. Rounding parameters refer to the object itself, not the shadow.
+    IMGUI_API void  AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding = 0.0f, ImDrawCornerFlags rounding_corners = ImDrawCornerFlags_All);
+    IMGUI_API void  AddShadowRectFilled(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col);
 
     // Stateful path API, add points then finish with PathFillConvex() or PathStroke()
     inline    void  PathClear()                                                 { _Path.Size = 0; }

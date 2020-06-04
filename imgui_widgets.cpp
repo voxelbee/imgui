@@ -6530,11 +6530,13 @@ bool ImGui::BeginMainMenuBar()
     g.NextWindowData.MenuBarOffsetMinVal = ImVec2(g.Style.DisplaySafeAreaPadding.x, ImMax(g.Style.DisplaySafeAreaPadding.y - g.Style.FramePadding.y, 0.0f));
     SetNextWindowPos(ImVec2(0.0f, 0.0f));
     SetNextWindowSize(ImVec2(g.IO.DisplaySize.x, g.NextWindowData.MenuBarOffsetMinVal.y + g.FontBaseSize + g.Style.FramePadding.y));
+    PushStyleColor(ImGuiCol_WindowShadow, ImVec4(0, 0, 0, 0));
     PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0, 0));
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
     bool is_open = Begin("##MainMenuBar", NULL, window_flags) && BeginMenuBar();
     PopStyleVar(2);
+    PopStyleColor();
     g.NextWindowData.MenuBarOffsetMinVal = ImVec2(0.0f, 0.0f);
     if (!is_open)
     {

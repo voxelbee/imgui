@@ -882,6 +882,7 @@ static void             UpdateMouseWheel();
 static void             UpdateTabFocus();
 static void             UpdateDebugToolItemPicker();
 static bool             UpdateWindowManualResize(ImGuiWindow* window, const ImVec2& size_auto_fit, int* border_held, int resize_grip_count, ImU32 resize_grip_col[4], const ImRect& visibility_rect);
+static void             RenderWindowShadow(ImGuiWindow* window);
 static void             RenderWindowOuterBorders(ImGuiWindow* window);
 static void             RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar_rect, bool title_bar_is_highlight, int resize_grip_count, const ImU32 resize_grip_col[4], float resize_grip_draw_size);
 static void             RenderWindowTitleBarContents(ImGuiWindow* window, const ImRect& title_bar_rect, const char* name, bool* p_open);
@@ -5358,11 +5359,8 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
 
         // Draw window shadow
         if (style.WindowShadowSize > 0.0f && (!(flags & ImGuiWindowFlags_ChildWindow) || (flags & ImGuiWindowFlags_Popup)))
-        {
-            float shadow_size = style.WindowShadowSize;
-            ImVec2 shadow_offset = ImVec2(ImCos(style.WindowShadowOffsetAngle), ImSin(style.WindowShadowOffsetAngle)) * style.WindowShadowOffsetDist;
-            window->DrawList->AddShadowRect(window->Pos, window->Pos + window->Size, shadow_size, shadow_offset, GetColorU32(ImGuiCol_WindowShadow), window_rounding);
-        }
+            if (style.Colors[ImGuiCol_WindowShadow].w > 0.0f)
+                RenderWindowShadow(window);
 
         // Title bar
         if (!(flags & ImGuiWindowFlags_NoTitleBar))
@@ -5404,6 +5402,15 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         // Borders
         RenderWindowOuterBorders(window);
     }
+}
+
+void ImGui::RenderWindowShadow(ImGuiWindow* window)
+{
+    ImGuiContext& g = *GImGui;
+    ImGuiStyle& style = g.Style;
+    float shadow_size = style.WindowShadowSize;
+    ImVec2 shadow_offset = ImVec2(ImCos(style.WindowShadowOffsetAngle), ImSin(style.WindowShadowOffsetAngle)) * style.WindowShadowOffsetDist;
+    window->DrawList->AddShadowRect(window->Pos, window->Pos + window->Size, shadow_size, shadow_offset, GetColorU32(ImGuiCol_WindowShadow), window->WindowRounding);
 }
 
 // Render title text, collapse button, close button

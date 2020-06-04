@@ -1531,7 +1531,7 @@ static void AddSubtractedRect(ImDrawList* draw_list, const ImVec2& a_min, const 
 static int ClipPolygonShape(ImVec2* src_points, int num_src_points, ImVec2* dest_points, int allocated_dest_points, ImVec2 clip_rect_min, ImVec2 clip_rect_max)
 {
     // Early-out with an empty result if clipping region is zero-sized
-    if ((clip_rect_max.x <= clip_rect_min.x) || (clip_rect_max.y <= clip_rect_min.y))
+    if (clip_rect_max.x <= clip_rect_min.x || clip_rect_max.y <= clip_rect_min.y)
         return 0;
 
     // Early-out if there is no source geometry
@@ -1674,7 +1674,7 @@ static int ClipPolygonShape(ImVec2* src_points, int num_src_points, ImVec2* dest
 static void AddSubtractedRect(ImDrawList* draw_list, const ImVec2& a_min, const ImVec2& a_max, const ImVec2& a_min_uv, const ImVec2& a_max_uv, ImVec2* b_points, int num_b_points, ImU32 col)
 {
     // Early out without drawing anything if A is zero-size
-    if ((a_min.x >= a_max.x) || (a_min.y >= a_max.y))
+    if (a_min.x >= a_max.x || a_min.y >= a_max.y)
         return;
 
     // First clip B to A
@@ -1818,25 +1818,25 @@ static void AddSubtractedRect(ImDrawList* draw_list, const ImVec2& a_min, const 
     }
 }
 
-void ImDrawList::AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding, ImDrawCornerFlags rounding_corners)
+static void AddShadowRectEx(ImDrawList* draw_list, const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding, ImDrawCornerFlags rounding_corners, bool is_filled)
 {
-    if ((col & IM_COL32_A_MASK) == 0)
-        return;
-
     ImVec2* inner_rect_points = NULL; // Points that make up the shape of the inner rectangle (used when it has rounded corners)
-    int num_inner_rect_points = 0;
+    int inner_rect_points_count = 0;
 
     // Generate a path describing the inner rectangle and copy it to our buffer
     const bool is_rounded = (rounding > 0.0f) && (rounding_corners != ImDrawCornerFlags_None); // Do we have rounded corners?
-    if (is_rounded)
+    if (is_rounded && !is_filled)
     {
-        _Path.Size = 0;
-        PathRect(p_min, p_max, rounding, rounding_corners);
-        num_inner_rect_points = _Path.Size;
-        inner_rect_points = (ImVec2*)alloca(num_inner_rect_points * sizeof(ImVec2)); //-V630
-        memcpy(inner_rect_points, _Path.Data, num_inner_rect_points * sizeof(ImVec2));
-        _Path.Size = 0;
+        IM_ASSERT(draw_list->_Path.Size == 0);
+        draw_list->PathRect(p_min, p_max, rounding, rounding_corners);
+        inner_rect_points_count = draw_list->_Path.Size;
+        inner_rect_points = (ImVec2*)alloca(inner_rect_points_count * sizeof(ImVec2)); //-V630
+        memcpy(inner_rect_points, draw_list->_Path.Data, inner_rect_points_count * sizeof(ImVec2));
+        draw_list->_Path.Size = 0;
     }
+
+    if (is_filled)
+        draw_list->PrimReserve(6 * 9, 4 * 9);
 
     // Draw the relevant chunks of the texture (the texture is split into a 3x3 grid)
     for (int x = 0; x < 3; x++)
@@ -1844,7 +1844,7 @@ void ImDrawList::AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float s
         for (int y = 0; y < 3; y++)
         {
             const int uv_index = x + (y + y + y); // y*3 formatted so as to ensure the compiler avoids an actual multiply
-            const ImVec4 uvs = _Data->ShadowRectUvs[uv_index];
+            const ImVec4 uvs = draw_list->_Data->ShadowRectUvs[uv_index];
 
             ImVec2 draw_min, draw_max;
             switch (x)
@@ -1862,12 +1862,30 @@ void ImDrawList::AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float s
 
             ImVec2 uv_min(uvs.x, uvs.y);
             ImVec2 uv_max(uvs.z, uvs.w);
-            if (is_rounded)
-                AddSubtractedRect(this, draw_min + offset, draw_max + offset, uv_min, uv_max, inner_rect_points, num_inner_rect_points, col); // Complex path for rounded rectangles
+            if (is_filled)
+                draw_list->PrimRectUV(draw_min + offset, draw_max + offset, uv_min, uv_max, col);
+            else if (is_rounded)
+                AddSubtractedRect(draw_list, draw_min + offset, draw_max + offset, uv_min, uv_max, inner_rect_points, inner_rect_points_count, col); // Complex path for rounded rectangles
             else
-                AddSubtractedRect(this, draw_min + offset, draw_max + offset, uv_min, uv_max, p_min, p_max, col); // Simple fast path for non-rounded rectangles
+                AddSubtractedRect(draw_list, draw_min + offset, draw_max + offset, uv_min, uv_max, p_min, p_max, col); // Simple fast path for non-rounded rectangles
         }
     }
+}
+
+void ImDrawList::AddShadowRectFilled(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col)
+{
+    if ((col & IM_COL32_A_MASK) == 0)
+        return;
+
+    AddShadowRectEx(this, p_min, p_max, shadow_thickness, offset, col, 0.0f, ImDrawCornerFlags_None, true);
+}
+
+void ImDrawList::AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding, ImDrawCornerFlags rounding_corners)
+{
+    if ((col & IM_COL32_A_MASK) == 0)
+        return;
+
+    AddShadowRectEx(this, p_min, p_max, shadow_thickness, offset, col, rounding, rounding_corners, false);
 }
 
 
