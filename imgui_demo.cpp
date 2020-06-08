@@ -244,14 +244,27 @@ static void TestTextureBasedRender()
 
     ImGui::Begin("tex_round_corners");
 
-    style.RoundCornersUseTex = io.KeyShift;
-    ImGui::Checkbox("style.RoundCornersUseTex (hold SHIFT to toggle)", &style.RoundCornersUseTex);
+    bool old_round_corners_use_tex = style.RoundCornersUseTex;
+    style.RoundCornersUseTex ^= io.KeyShift;
+
+    if (ImGui::Checkbox("style.RoundCornersUseTex (hold SHIFT to toggle)", &style.RoundCornersUseTex))
+        old_round_corners_use_tex = !old_round_corners_use_tex;
+
+    if (style.RoundCornersUseTex)
+        ImGui::GetWindowDrawList()->Flags |= ImDrawListFlags_RoundCornersUseTex;
+    else 
+        ImGui::GetWindowDrawList()->Flags &= ~ImDrawListFlags_RoundCornersUseTex;
 
     static float radius = 16.0f; // ImFontAtlasRoundCornersMaxSize * 0.5f;
     static int segments = 20;
     static int ngon_segments = 6;
 
     ImGui::SliderFloat("radius", &radius, 0.0f, 64.0f /*(float)ImFontAtlasRoundCornersMaxSize*/, "%.0f");
+
+    static int width = 180;
+    static int height = 180;
+    ImGui::SliderInt("width", &width, 1, 200);
+    ImGui::SliderInt("height", &height, 1, 200);
 
     static float stroke_width = 1.0f;
 
@@ -305,8 +318,9 @@ static void TestTextureBasedRender()
 
         {
             ImGui::Button("##3", ImVec2(200, 200));
-            ImVec2 r_min = ImGui::GetItemRectMin();
-            ImVec2 r_max = ImGui::GetItemRectMax();
+            ImVec2 size = ImGui::GetItemRectSize();
+            ImVec2 r_min = ImVec2(ImGui::GetItemRectMin().x + ((size.x - width) * 0.5f), ImGui::GetItemRectMin().y + ((size.y - height) * 0.5f));
+            ImVec2 r_max = ImVec2(r_min.x + width, r_min.y + height);
 
             GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
             draw_list->AddRectFilled(r_min, r_max, IM_COL32(255,0,255,255), radius, corner_flags);
@@ -315,8 +329,10 @@ static void TestTextureBasedRender()
         }
         {
             ImGui::Button("##4", ImVec2(200, 200));
-            ImVec2 r_min = ImGui::GetItemRectMin();
-            ImVec2 r_max = ImGui::GetItemRectMax();
+            ImVec2 size = ImGui::GetItemRectSize();
+            ImVec2 r_min = ImVec2(ImGui::GetItemRectMin().x + ((size.x - width) * 0.5f), ImGui::GetItemRectMin().y + ((size.y - height) * 0.5f));
+            ImVec2 r_max = ImVec2(r_min.x + width, r_min.y + height);
+
 
             GetVtxIdxDelta(draw_list, &vtx_n, &idx_n);
             draw_list->AddRect(r_min, r_max, IM_COL32(255,0,255,255), radius, corner_flags, stroke_width);
@@ -368,6 +384,8 @@ static void TestTextureBasedRender()
     ImGui::Text("Atlas");
     ImFontAtlas* atlas = ImGui::GetIO().Fonts;
     ImGui::Image(atlas->TexID, ImVec2((float)atlas->TexWidth, (float)atlas->TexHeight), ImVec2(0, 0), ImVec2(1, 1), ImColor(255, 255, 255, 255), ImColor(255, 255, 255, 128));
+
+    style.RoundCornersUseTex = old_round_corners_use_tex;
 
     ImGui::End();
 }

@@ -634,6 +634,7 @@ struct IMGUI_API ImDrawListSharedData
     const ImVec4*   TexUvLines;                 // UV of anti-aliased lines in the atlas
 
     ImVector<ImFontRoundedCornerData>* TexRoundCornerData; // Data for texture-based rounded corners, indexed by radius
+    ImVector<ImFontRoundedCornerData>* TexSquareCornerData; // Data for texture-based square corners, indexed by radius
 
     ImDrawListSharedData();
     void SetCircleSegmentMaxError(float max_error);
