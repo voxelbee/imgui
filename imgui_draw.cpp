@@ -1290,23 +1290,23 @@ inline bool AddRoundCornerRect(ImDrawList* draw_list, const ImVec2& a, const ImV
 
     const ImVec2 ttl = may;
     const ImVec2 ttr = mby;
-    const ImVec2 tbr(mby.x, mby.y + top_side_thickness);
-    const ImVec2 tbl(may.x, may.y + top_side_thickness);
+    const ImVec2 tbr(mby.x, mby.y + (fill ? size_b : top_side_thickness));
+    const ImVec2 tbl(may.x, may.y + (fill ? size_a : top_side_thickness));
 
-    const ImVec2 btl(mdy.x, mdy.y - bottom_side_thickness);
-    const ImVec2 btr(mcy.x, mcy.y - bottom_side_thickness);
+    const ImVec2 btl(mdy.x, mdy.y - (fill ? size_d : bottom_side_thickness));
+    const ImVec2 btr(mcy.x, mcy.y - (fill ? size_c : bottom_side_thickness));
     const ImVec2 bbr = mcy;
     const ImVec2 bbl = mdy;
 
     const ImVec2 ltl = max;
-    const ImVec2 ltr(max.x + left_side_thickness, max.y);
-    const ImVec2 lbr(mdx.x + left_side_thickness, mdx.y);
+    const ImVec2 ltr(max.x + (fill ? size_a : left_side_thickness), max.y);
+    const ImVec2 lbr(mdx.x + (fill ? size_d : left_side_thickness), mdx.y);
     const ImVec2 lbl = mdx;
 
-    const ImVec2 rtl(mbx.x - right_side_thickness, mbx.y);
+    const ImVec2 rtl(mbx.x - (fill ? size_b : right_side_thickness), mbx.y);
     const ImVec2 rtr = mbx;
     const ImVec2 rbr = mcx;
-    const ImVec2 rbl(mcx.x - right_side_thickness, mcx.y);
+    const ImVec2 rbl(mcx.x - (fill ? size_c : right_side_thickness), mcx.y);
 
     // Reserve enough space for the vertices/indices
     const int vtcs = fill ? (4 * 9) : (4 * 8);
@@ -3171,7 +3171,7 @@ static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
                         if (filled)
                         {
                             // The filled version starts a little further down the texture to give us the padding in the middle.
-                            cy = ImMax(y - FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING, 0);
+                            cy = ImMax((float)y - FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING, 0.0f);
                         }
 
                         const float dist = (square ? ImMax(cx, cy) : ImSqrt((float)(cx*cx + cy * cy))) - (float)(radius - (filled ? 0 : (stroke_width * 0.5f) + 0.5f));
