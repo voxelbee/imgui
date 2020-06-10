@@ -3048,7 +3048,7 @@ static void ImFontAtlasBuildRegisterRoundCornersCustomRects(ImFontAtlas* atlas)
                 const int height = radius_index + 1 + FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING + pad * 2;
 
                 ImFontRoundedCornerData corner_data;
-                if (ImFontAtlasRoundCornersStrokeWidthMask & (1 << stroke_width_index))
+                if ((ImFontAtlasRoundCornersStrokeWidthMask & (1 << stroke_width_index)) && (ImFontAtlasRoundCornersSizeMask & (1ULL << radius_index)))
                 {
                     if (stroke_width_index == 0 || spare_rect_id < 0)
                     {
@@ -3159,8 +3159,9 @@ static void ImFontAtlasBuildRenderRoundCornersTexData(ImFontAtlas* atlas)
                     {
                         // We want the pad area to essentially contain a clamped version of the 0th row/column, so
                         // clamp here. Not doing this results in nasty filtering artifacts at low radii.
-                        int cx = ImMax(x, 0);
-                        int cy = ImMax(y, 0);
+                        const float sampling_offset = 0.25f; // Experimentally obtained offset to compensate for sampling point
+                        float cx = ImMax(x + sampling_offset, 0.0f);
+                        float cy = ImMax(y + sampling_offset, 0.0f);
 
                         // The X<Y region of the texture contains the data for filled corners, the X>Y region
                         // the data for stroked ones. We add half of FONT_ATLAS_ROUNDED_CORNER_TEX_CENTER_PADDING so that

@@ -2468,13 +2468,15 @@ IMGUI_API void              ImFontAtlasBuildRender1bppRectFromString(ImFontAtlas
 IMGUI_API void              ImFontAtlasBuildMultiplyCalcLookupTable(unsigned char out_table[256], float in_multiply_factor);
 IMGUI_API void              ImFontAtlasBuildMultiplyRectAlpha8(const unsigned char table[256], unsigned char* pixels, int x, int y, int w, int h, int stride);
 
-// Note that stroke width increases effective radius, so (e.g.) a max radius circle will have to use the fallback path if stroke width is > 1
+// Note that stroke width increases effective radius, so (e.g.) a max radius circle will have to use the fallback path if stroke width is > 1. Note that ImFontAtlasRoundCornersSizeMask is 64 bits so this value can only go up to a maximum of 64 at present.
 const int                   ImFontAtlasRoundCornersMaxSize = 32;        // Maximum size of rounded corner texture to generate in fonts
+// Bit mask for which radii will have texture generated for them, starting from radius 1. Only bits up to ImFontAtlasRoundCornersMaxSize are considered.
+const ImU64                 ImFontAtlasRoundCornersSizeMask = (1ULL << ImFontAtlasRoundCornersMaxSize) - 1;
 const int                   ImFontAtlasRoundCornersMaxStrokeWidth = 4;  // Maximum stroke width of rounded corner texture to generate in fonts
 // Bit mask for which stroke widths should have textures generated for them (the default of 0x0B means widths 1, 2 and 4)
 // Only bits up to ImFontAtlasRoundCornersMaxStrokeWidth are considered, and bit 0 (stroke width 1) must always be set
 // Optimally there should be an odd number of bits set, as the texture packing packs the data in pairs, with one half of one pair being occupied by the filled texture
-const int                   ImFontAtlasRoundCornersStrokeWidthMask = 0x0B;
+const ImU32                 ImFontAtlasRoundCornersStrokeWidthMask = 0x0B;
 
 //-----------------------------------------------------------------------------
 // [SECTION] Test Engine specific hooks (imgui_test_engine)
