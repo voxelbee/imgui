@@ -2376,10 +2376,16 @@ struct ImDrawList
     // Shadows primitives
     // [BETA] API
     // - Add a shadow for a rectangular object, with min-max giving the object extents, and offset shifting the shadow. Rounding parameters refer to the object itself, not the shadow.
-    // - In the vast majority of cases, filled shadows are unnecessary and wasteful. We still provide the primitives for consistency and flexibility.
+    // - The filled parameter causes the shadow "under" the object to be drawn as well. In the vast majority of cases, filled shadows are unnecessary and wasteful. We still provide the primitives for consistency and flexibility.
     #define IMGUI_HAS_SHADOWS 1
     IMGUI_API void  AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding = 0.0f, ImDrawCornerFlags rounding_corners = ImDrawCornerFlags_All);
     IMGUI_API void  AddShadowRectFilled(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col);
+    IMGUI_API void  AddShadowCircle(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments = 12); // Offset not currently supported
+    IMGUI_API void  AddShadowCircleFilled(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments = 12); // Offset not currently supported
+    IMGUI_API void  AddShadowNGon(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments); // Offset not currently supported
+    IMGUI_API void  AddShadowNGonFilled(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments); // Offset not currently supported
+    IMGUI_API void  AddShadowConvexPoly(const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col); // Offset not currently supported
+    IMGUI_API void  AddShadowConvexPolyFilled(const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col); // Offset not currently supported
 
     // Stateful path API, add points then finish with PathFillConvex() or PathStroke()
     inline    void  PathClear()                                                 { _Path.Size = 0; }
@@ -2464,8 +2470,11 @@ struct ImFontAtlasShadowTexConfig
     bool    TexBlur;                // Do we want to Gaussian blur the shadow texture?
 
     IMGUI_API ImFontAtlasShadowTexConfig();
-    int     GetPadding() const      { return 2; }                                           // Number of pixels of padding to add to avoid sampling artifacts at the edges.
-    int     CalcTexSize() const     { return TexCornerSize + TexEdgeSize + GetPadding(); }  // The size of the texture area required for the actual 2x2 shadow texture (after the redundant corners have been removed). Padding is required here to avoid sampling artifacts at the edge adjoining the removed corners.
+    int     GetRectTexPadding() const   { return 2; }                                                   // Number of pixels of padding to add to the rectangular texture to avoid sampling artifacts at the edges.
+    int     CalcRectTexSize() const     { return TexCornerSize + TexEdgeSize + GetRectTexPadding(); }   // The size of the texture area required for the actual 2x2 rectangle shadow texture (after the redundant corners have been removed). Padding is required here to avoid sampling artifacts at the edge adjoining the removed corners.    int     CalcConvexTexWidth() const;                                                                // The width of the texture area required for the convex shape shadow texture.
+    int     GetConvexTexPadding() const { return 8; }                                                   // Number of pixels of padding to add to the convex shape texture to avoid sampling artifacts at the edges. This also acts as padding for the expanded corner triangles.
+    int     CalcConvexTexWidth() const;                                                                 // The width of the texture area required for the convex shape shadow texture.
+    int     CalcConvexTexHeight() const;                                                                // The height of the texture area required for the convex shape shadow texture.
 };
 
 struct ImFontConfig
@@ -2649,8 +2658,8 @@ struct ImFontAtlas
     int                         PackIdLines;        // Custom texture rectangle ID for baked anti-aliased lines
 
     // [Internal] Shadow data
-    int                         ShadowRectId;       // ID of rect for shadow texture
-    ImVec4                      ShadowRectUvs[9];   // UV coordinates for shadow texture.
+    int                         ShadowRectIds[2];   // IDs of rect for shadow textures
+    ImVec4                      ShadowRectUvs[10];  // UV coordinates for shadow textures, 9 for the rectangle shadows and the final entry for the convex shape shadows
     ImFontAtlasShadowTexConfig  ShadowTexConfig;    // Shadow texture baking config
 
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS

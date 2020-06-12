@@ -362,6 +362,31 @@ void ImGui::StyleColorsLight(ImGuiStyle* dst)
 }
 
 //-----------------------------------------------------------------------------
+// [SECTION] ImFontAtlasShadowTexConfig
+//-----------------------------------------------------------------------------
+
+ImFontAtlasShadowTexConfig::ImFontAtlasShadowTexConfig()
+{
+    TexCornerSize = 16;
+    TexEdgeSize = 1;
+    TexFalloffPower = 4.8f;
+    TexDistanceFieldOffset = 3.8f;
+    TexBlur = true;
+}
+
+int ImFontAtlasShadowTexConfig::CalcConvexTexWidth() const
+{
+    // We have to pad the texture enough that we don't go off the edges when we expand the corner triangles
+    return (int)((TexCornerSize / ImCos(IM_PI * 0.25f)) + (GetConvexTexPadding() * 2));
+}
+
+int ImFontAtlasShadowTexConfig::CalcConvexTexHeight() const
+{
+    // We have to pad the texture enough that we don't go off the edges when we expand the corner triangles
+    return (int)((TexCornerSize / ImCos(IM_PI * 0.25f)) + (GetConvexTexPadding() * 2));
+}
+
+//-----------------------------------------------------------------------------
 // [SECTION] ImDrawList
 //-----------------------------------------------------------------------------
 
@@ -373,7 +398,6 @@ ImDrawListSharedData::ImDrawListSharedData()
         const float a = ((float)i * 2 * IM_PI) / (float)IM_ARRAYSIZE(ArcFastVtx);
         ArcFastVtx[i] = ImVec2(ImCos(a), ImSin(a));
     }
-    ShadowRectId = -1;
 }
 
 void ImDrawListSharedData::SetCircleSegmentMaxError(float max_error)
@@ -1836,7 +1860,7 @@ static void AddShadowRectEx(ImDrawList* draw_list, const ImVec2& p_min, const Im
     }
 
     if (is_filled)
-        draw_list->PrimReserve(6 * 9, 4 * 9);
+        draw_list->PrimReserve(6 * 9, 4 * 9); // Reserve space for adding unclipped chunks
 
     // Draw the relevant chunks of the texture (the texture is split into a 3x3 grid)
     for (int x = 0; x < 3; x++)
@@ -1863,7 +1887,7 @@ static void AddShadowRectEx(ImDrawList* draw_list, const ImVec2& p_min, const Im
             ImVec2 uv_min(uvs.x, uvs.y);
             ImVec2 uv_max(uvs.z, uvs.w);
             if (is_filled)
-                draw_list->PrimRectUV(draw_min + offset, draw_max + offset, uv_min, uv_max, col);
+                draw_list->PrimRectUV(draw_min + offset, draw_max + offset, uv_min, uv_max, col); // No clipping path (draw entire shadow)
             else if (is_rounded)
                 AddSubtractedRect(draw_list, draw_min + offset, draw_max + offset, uv_min, uv_max, inner_rect_points, inner_rect_points_count, col); // Complex path for rounded rectangles
             else
@@ -1888,6 +1912,260 @@ void ImDrawList::AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float s
     AddShadowRectEx(this, p_min, p_max, shadow_thickness, offset, col, rounding, rounding_corners, false);
 }
 
+// Add a shadow for a convex shape described by points and num_points
+static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col, bool is_filled)
+{
+    IM_UNUSED(offset); // Offset not currently supported
+
+    const ImVec4 uvs = draw_list->_Data->ShadowRectUvs[9];
+
+    int tex_width = draw_list->_Data->Font->ContainerAtlas->TexWidth;
+    int tex_height = draw_list->_Data->Font->ContainerAtlas->TexHeight;
+    float inv_tex_width = 1.0f / (float)tex_width;
+    float inv_tex_height = 1.0f / (float)tex_height;
+
+    ImVec2 solid_uv = ImVec2(uvs.z, uvs.w); // UV at the inside of an edge
+    ImVec2 edge_uv = ImVec2(uvs.x, uvs.w); // UV at the outside of an edge
+
+    ImVec2 solid_to_edge_delta_texels = edge_uv - solid_uv; // Delta between the solid/edge points in texel-space (we need this in pixels - or, to be more precise, to be at a 1:1 aspect ratio - for the rotation to work)
+    solid_to_edge_delta_texels.x *= (float)tex_width;
+    solid_to_edge_delta_texels.y *= (float)tex_height;
+
+    // Our basic algorithm here is that we generate a straight section along each edge, and then either one or two curved corner triangles at the corners,
+    // which use an appropriate chunk of the texture to generate a smooth curve.
+    const int num_edges = num_points;
+
+    // Normalize a vector
+#define NORMALIZE(vec) ((vec) / ImLength((vec), 0.001f))
+
+    // Calculate edge normals
+    ImVec2* edge_normals = (ImVec2*)alloca(num_edges * sizeof(ImVec2));
+
+    for (int edge_index = 0; edge_index < num_edges; edge_index++)
+    {
+        ImVec2 edge_start = points[edge_index];
+        ImVec2 edge_end = points[(edge_index + 1) % num_edges];
+        ImVec2 edge_normal = NORMALIZE(ImVec2(edge_end.y - edge_start.y, -(edge_end.x - edge_start.x)));
+
+        edge_normals[edge_index] = edge_normal;
+    }
+
+    const int max_vertices = (4 + (3 * 2) + (is_filled ? 1 : 0)) * num_edges; // 4 vertices per edge plus 3*2 for potentially two corner triangles, plus one per vertex for fill
+    const int max_indices = ((6 + (3 * 2)) * num_edges) + (is_filled ? ((num_edges - 2) * 3) : 0); // 2 tris per edge plus up to two corner triangles, plus fill triangles
+    draw_list->PrimReserve(max_indices, max_vertices);
+    ImDrawIdx* idx_write = draw_list->_IdxWritePtr;
+    ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
+    ImDrawIdx current_idx = (ImDrawIdx)draw_list->_VtxCurrentIdx;
+
+    ImVec2 previous_edge_start = points[0];
+    ImVec2 edge_start = points[0];
+    ImVec2 prev_edge_normal = edge_normals[num_edges - 1];
+
+    for (int edge_index = 0; edge_index < num_edges; edge_index++)
+    {
+        ImVec2 edge_end = points[(edge_index + 1) % num_edges];
+        ImVec2 edge_normal = edge_normals[edge_index];
+
+        // Add corner section
+        float cos_angle_coverage = ImDot(edge_normal, prev_edge_normal);
+
+        if (cos_angle_coverage < 0.999999f) // Don't fill if the corner is actually straight
+        {
+            // If we are covering more than 90 degrees we need an intermediate vertex to stop the required expansion tending towards infinity
+            int num_steps = (cos_angle_coverage <= 0.0f) ? 2 : 1;
+
+            for (int step = 0; step < num_steps; step++)
+            {
+                if (num_steps > 1)
+                {
+                    if (step == 0)
+                        edge_normal = NORMALIZE(edge_normal + prev_edge_normal); // Use half-way normal for first step
+                    else
+                        edge_normal = edge_normals[edge_index]; // Then use the "real" next edge normal for the second
+
+                    cos_angle_coverage = ImDot(edge_normal, prev_edge_normal); // Recalculate angle
+                }
+
+                // Calculate UV for the section of the curved texture
+
+                float angle_coverage = ImAcos(cos_angle_coverage);
+                float sin_angle_coverage = ImSin(angle_coverage);
+
+                float size_scale = 1.0f / ImCos(angle_coverage * 0.5f); // How much we need to expand our size by to avoid clipping the corner of the texture off
+
+                ImVec2 edge_delta = solid_to_edge_delta_texels;
+
+                edge_delta *= size_scale;
+
+                ImVec2 rotated_edge_delta = ImVec2((edge_delta.x * cos_angle_coverage) + (edge_delta.y * sin_angle_coverage), (edge_delta.x * sin_angle_coverage) + (edge_delta.y * cos_angle_coverage));
+
+                // Convert from texels back into UV space
+                edge_delta.x *= inv_tex_width;
+                edge_delta.y *= inv_tex_height;
+                rotated_edge_delta.x *= inv_tex_width;
+                rotated_edge_delta.y *= inv_tex_height;
+
+                ImVec2 expanded_edge_uv = solid_uv + edge_delta;
+                ImVec2 other_edge_uv = solid_uv + rotated_edge_delta; // Rotated UV to encompass the necessary section of the curve
+
+                float expanded_thickness = shadow_thickness * size_scale;
+
+                // Add a triangle to fill the corner
+                ImVec2 outer_edge_start = edge_start + (prev_edge_normal * expanded_thickness);
+                ImVec2 outer_edge_end = edge_start + (edge_normal * expanded_thickness);
+
+                vtx_write->pos = edge_start; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
+                vtx_write->pos = outer_edge_end; vtx_write->col = col; vtx_write->uv = expanded_edge_uv; vtx_write++;
+                vtx_write->pos = outer_edge_start; vtx_write->col = col; vtx_write->uv = other_edge_uv; vtx_write++;
+
+                *(idx_write++) = current_idx;
+                *(idx_write++) = current_idx + 1;
+                *(idx_write++) = current_idx + 2;
+                current_idx += 3;
+
+                prev_edge_normal = edge_normal;
+            }
+        }
+
+        // Add section along edge
+        const float edge_length = ImLength(edge_end - edge_start, 0.0f);
+
+        if (edge_length > 0.00001f) // Don't try and process degenerate edges
+        {
+            ImVec2 outer_edge_start = edge_start + (edge_normal * shadow_thickness);
+            ImVec2 outer_edge_end = edge_end + (edge_normal * shadow_thickness);
+
+            // Write vertices, inner first, then outer
+            vtx_write->pos = edge_start; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
+            vtx_write->pos = edge_end; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
+            vtx_write->pos = outer_edge_end; vtx_write->col = col; vtx_write->uv = edge_uv; vtx_write++;
+            vtx_write->pos = outer_edge_start; vtx_write->col = col; vtx_write->uv = edge_uv; vtx_write++;
+
+            *(idx_write++) = current_idx;
+            *(idx_write++) = current_idx + 1;
+            *(idx_write++) = current_idx + 2;
+            *(idx_write++) = current_idx;
+            *(idx_write++) = current_idx + 2;
+            *(idx_write++) = current_idx + 3;
+            current_idx += 4;
+        }
+
+        edge_start = edge_end;
+    }
+
+    if (is_filled) // Fill if requested
+    {
+        // Add vertices
+        for (int edge_index = 0; edge_index < num_edges; edge_index++)
+        {
+            vtx_write->pos = points[edge_index]; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
+        }
+
+        // Add tris
+        for (int edge_index = 2; edge_index < num_edges; edge_index++)
+        {
+            *(idx_write++) = current_idx;
+            *(idx_write++) = (ImDrawIdx)(current_idx + edge_index - 1);
+            *(idx_write++) = (ImDrawIdx)(current_idx + edge_index);
+        }
+
+        current_idx += (ImDrawIdx)num_edges;
+    }
+
+    // Release any unused vertices/indices
+    int used_indices = (int)(idx_write - draw_list->_IdxWritePtr);
+    int used_vertices = (int)(vtx_write - draw_list->_VtxWritePtr);
+    draw_list->_IdxWritePtr = idx_write;
+    draw_list->_VtxWritePtr = vtx_write;
+    draw_list->_VtxCurrentIdx = current_idx;
+    draw_list->PrimUnreserve(max_indices - used_indices, max_vertices - used_vertices);
+#undef NORMALIZE
+}
+
+// Draw a shadow for a circular object
+// Uses the draw path and so wipes any existing data there
+static void AddShadowCircleEx(ImDrawList* draw_list, const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments, bool is_filled)
+{
+    // Obtain segment count
+    if (num_segments <= 0)
+    {
+        // Automatic segment count
+        const int radius_idx = (int)radius - 1;
+        if (radius_idx < IM_ARRAYSIZE(draw_list->_Data->CircleSegmentCounts))
+            num_segments = draw_list->_Data->CircleSegmentCounts[radius_idx]; // Use cached value
+        else
+            num_segments = IM_DRAWLIST_CIRCLE_AUTO_SEGMENT_CALC(radius, draw_list->_Data->CircleSegmentMaxError);
+    }
+    else
+    {
+        // Explicit segment count (still clamp to avoid drawing insanely tessellated shapes)
+        num_segments = ImClamp(num_segments, 3, IM_DRAWLIST_CIRCLE_AUTO_SEGMENT_MAX);
+    }
+
+    // Generate a path describing the inner circle and copy it to our buffer
+
+    IM_ASSERT(draw_list->_Path.Size == 0);
+
+    const float a_max = (IM_PI * 2.0f) * ((float)num_segments - 1.0f) / (float)num_segments;
+    if (num_segments == 12)
+        draw_list->PathArcToFast(center, radius, 0, 11);
+    else
+        draw_list->PathArcTo(center, radius, 0.0f, a_max, num_segments - 1);
+
+    // Draw the shadow using the convex shape code
+    AddShadowConvexShapeEx(draw_list, draw_list->_Path.Data, draw_list->_Path.Size, shadow_thickness, offset, col, is_filled);
+
+    // Clear the path we generated
+    draw_list->_Path.Size = 0;
+}
+
+void ImDrawList::AddShadowCircle(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments)
+{
+    if (((col & IM_COL32_A_MASK) == 0) || (radius <= 0))
+        return;
+
+    AddShadowCircleEx(this, center, radius, shadow_thickness, offset, col, num_segments, false);
+}
+
+void ImDrawList::AddShadowCircleFilled(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments)
+{
+    if (((col & IM_COL32_A_MASK) == 0) || (radius <= 0))
+        return;
+
+    AddShadowCircleEx(this, center, radius, shadow_thickness, offset, col, num_segments, true);
+}
+
+void ImDrawList::AddShadowNGon(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments)
+{
+    if (((col & IM_COL32_A_MASK) == 0) || (radius <= 0))
+        return;
+
+    AddShadowCircleEx(this, center, radius, shadow_thickness, offset, col, num_segments, false);
+}
+
+void ImDrawList::AddShadowNGonFilled(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments)
+{
+    if (((col & IM_COL32_A_MASK) == 0) || (radius <= 0))
+        return;
+
+    AddShadowCircleEx(this, center, radius, shadow_thickness, offset, col, num_segments, true);
+}
+
+void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col)
+{
+    if ((col & IM_COL32_A_MASK) == 0)
+        return;
+
+    AddShadowConvexShapeEx(this, points, num_points, shadow_thickness, offset, col, false);
+}
+
+void ImDrawList::AddShadowConvexPolyFilled(const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col)
+{
+    if ((col & IM_COL32_A_MASK) == 0)
+        return;
+
+    AddShadowConvexShapeEx(this, points, num_points, shadow_thickness, offset, col, true);
+}
 
 //-----------------------------------------------------------------------------
 // [SECTION] ImDrawListSplitter
@@ -2127,19 +2405,6 @@ void ImGui::ShadeVertsLinearUV(ImDrawList* draw_list, int vert_start_idx, int ve
 }
 
 //-----------------------------------------------------------------------------
-// [SECTION] ImFontAtlasShadowTexConfig
-//-----------------------------------------------------------------------------
-
-ImFontAtlasShadowTexConfig::ImFontAtlasShadowTexConfig()
-{
-    TexCornerSize = 16;
-    TexEdgeSize = 1;
-    TexFalloffPower = 4.8f;
-    TexDistanceFieldOffset = 3.8f;
-    TexBlur = true;
-}
-
-//-----------------------------------------------------------------------------
 // [SECTION] ImFontConfig
 //-----------------------------------------------------------------------------
 
@@ -2232,7 +2497,7 @@ ImFontAtlas::ImFontAtlas()
     TexUvScale = ImVec2(0.0f, 0.0f);
     TexUvWhitePixel = ImVec2(0.0f, 0.0f);
     PackIdMouseCursors = PackIdLines = -1;
-    ShadowRectId = -1;
+    ShadowRectIds[0] = ShadowRectIds[1] = -1;
 }
 
 ImFontAtlas::~ImFontAtlas()
@@ -2261,7 +2526,7 @@ void    ImFontAtlas::ClearInputData()
     ConfigData.clear();
     CustomRects.clear();
     PackIdMouseCursors = PackIdLines = -1;
-    ShadowRectId = -1;
+    ShadowRectIds[0] = ShadowRectIds[1] = -1;
 }
 
 void    ImFontAtlas::ClearTexData()
@@ -2938,13 +3203,17 @@ static void ImFontAtlasBuildRenderLinesTexData(ImFontAtlas* atlas)
 // Register the rectangles we need for the rounded corner images
 static void ImFontAtlasBuildRegisterShadowCustomRects(ImFontAtlas* atlas)
 {
-    if (atlas->ShadowRectId >= 0)
+    if (atlas->ShadowRectIds[0] >= 0)
         return;
+
+    // ShadowRectIds[0] is the rectangle for rectangular shadows
+    // ShadowRectIds[1] is the rectangle for convex shadows
 
     // The actual size we want to reserve, including padding
     const ImFontAtlasShadowTexConfig* shadow_cfg = &atlas->ShadowTexConfig;
-    const unsigned int effective_size = shadow_cfg->CalcTexSize() + shadow_cfg->GetPadding();
-    atlas->ShadowRectId = atlas->AddCustomRectRegular(effective_size, effective_size);
+    const unsigned int effective_size = shadow_cfg->CalcRectTexSize() + shadow_cfg->GetRectTexPadding();
+    atlas->ShadowRectIds[0] = atlas->AddCustomRectRegular(effective_size, effective_size);
+    atlas->ShadowRectIds[1] = atlas->AddCustomRectRegular(shadow_cfg->CalcConvexTexWidth() + shadow_cfg->GetConvexTexPadding(), shadow_cfg->CalcConvexTexHeight() + shadow_cfg->GetConvexTexPadding());
 }
 
 // Calculates the signed distance from samplePos to the nearest point on the rectangle defined by rectMin-rectMax
@@ -2961,6 +3230,12 @@ static float DistanceFromRectangle(ImVec2 samplePos, ImVec2 rectMin, ImVec2 rect
     float in_dist = ImMin(ImMax(axis_dist.x, axis_dist.y), 0.0f);
 
     return out_dist + in_dist;
+}
+
+// Calculates the signed distance from samplePos to the point given
+static float DistanceFromPoint(ImVec2 samplePos, ImVec2 point)
+{
+    return ImLength(samplePos - point, 0.0f);
 }
 
 // Perform a single Gaussian blur pass with a fixed kernel size and sigma
@@ -3007,82 +3282,146 @@ static void GaussianBlur(float* data, int size)
 static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
 {
     IM_ASSERT(atlas->TexPixelsAlpha8 != NULL);
-    IM_ASSERT(atlas->ShadowRectId >= 0);
+    IM_ASSERT(atlas->ShadowRectIds[0] >= 0);
+    IM_ASSERT(atlas->ShadowRectIds[1] >= 0);
 
     // Because of the blur, we have to generate the full 3x3 texture here, and then we chop that down to just the 2x2 section we need later.
     // 'size' correspond to the our 3x3 size, whereas 'shadow_tex_size' correspond to our 2x2 version where duplicate mirrored corners are not stored.
     const ImFontAtlasShadowTexConfig* shadow_cfg = &atlas->ShadowTexConfig;
-    const int size = shadow_cfg->TexCornerSize + shadow_cfg->TexEdgeSize + shadow_cfg->TexCornerSize;
-    const int corner_size = shadow_cfg->TexCornerSize;
-    const int edge_size = shadow_cfg->TexEdgeSize;
 
-    // The bounds of the rectangle we are generating the shadow from
-    const ImVec2 shadow_rect_min((float)corner_size, (float)corner_size);
-    const ImVec2 shadow_rect_max((float)(corner_size + edge_size), (float)(corner_size + edge_size));
-
-    // Render the texture
-    ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectId];
-
-    // Remove the padding we added
-    const int padding = shadow_cfg->GetPadding();
-    r.X += (unsigned short)padding;
-    r.Y += (unsigned short)padding;
-    r.Width -= (unsigned short)padding * 2;
-    r.Height -= (unsigned short)padding * 2;
-
-    // We draw the actual texture content by evaluating the distance field for the inner rectangle
-    // Generate distance field
-    float* tex_data = (float*)alloca(size * size * sizeof(float));
-    for (int y = 0; y < size; y++)
-        for (int x = 0; x < size; x++)
-        {
-            float dist = DistanceFromRectangle(ImVec2((float)x, (float)y), shadow_rect_min, shadow_rect_max);
-            float alpha = 1.0f - ImMin(ImMax(dist + shadow_cfg->TexDistanceFieldOffset, 0.0f) / ImMax(shadow_cfg->TexCornerSize + shadow_cfg->TexDistanceFieldOffset, 0.001f), 1.0f);
-            alpha = ImPow(alpha, shadow_cfg->TexFalloffPower);  // Apply power curve to give a nicer falloff
-            tex_data[x + (y * size)] = alpha;
-        }
-
-    // Blur
-    if (shadow_cfg->TexBlur)
-        GaussianBlur(tex_data, size);
-
-    // Copy to texture, truncating to the actual required texture size (the bottom/right of the source data is chopped off, as we don't need it - see below). The truncated size is essentially the top 2x2 of our data, plus a little bit of padding for sampling.
-    const int tex_w = atlas->TexWidth;
-    const int shadow_tex_size = shadow_cfg->CalcTexSize();
-    for (int y = 0; y < shadow_tex_size; y++)
-        for (int x = 0; x < shadow_tex_size; x++)
-        {
-            const float alpha = tex_data[x + (y * size)];
-            const unsigned int offset = (int)(r.X + x) + (int)(r.Y + y) * tex_w;
-            atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * alpha);
-        }
-
-    // Generate UVs for each of the nine sections, which are arranged in a 3x3 grid starting from 0 in the top-left and going across then down
-    for (int i = 0; i < 9; i++)
+    // The rectangular shadow texture
     {
-        ImFontAtlasCustomRect sub_rect = r;
+        const int size = shadow_cfg->TexCornerSize + shadow_cfg->TexEdgeSize + shadow_cfg->TexCornerSize;
+        const int corner_size = shadow_cfg->TexCornerSize;
+        const int edge_size = shadow_cfg->TexEdgeSize;
 
-        // The third row/column of the 3x3 grid are generated by flipping the appropriate chunks of the upper 2x2 grid.
-        bool flip_h = false; // Do we need to flip the UVs horizontally?
-        bool flip_v = false; // Do we need to flip the UVs vertically?
+        // The bounds of the rectangle we are generating the shadow from
+        const ImVec2 shadow_rect_min((float)corner_size, (float)corner_size);
+        const ImVec2 shadow_rect_max((float)(corner_size + edge_size), (float)(corner_size + edge_size));
 
-        switch (i % 3)
+        // Render the texture
+        ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectIds[0]];
+
+        // Remove the padding we added
+        const int padding = shadow_cfg->GetRectTexPadding();
+        r.X += (unsigned short)padding;
+        r.Y += (unsigned short)padding;
+        r.Width -= (unsigned short)padding * 2;
+        r.Height -= (unsigned short)padding * 2;
+
+        // We draw the actual texture content by evaluating the distance field for the inner rectangle
+        // Generate distance field
+        float* tex_data = (float*)alloca(size * size * sizeof(float));
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float dist = DistanceFromRectangle(ImVec2((float)x, (float)y), shadow_rect_min, shadow_rect_max);
+                float alpha = 1.0f - ImMin(ImMax(dist + shadow_cfg->TexDistanceFieldOffset, 0.0f) / ImMax(shadow_cfg->TexCornerSize + shadow_cfg->TexDistanceFieldOffset, 0.001f), 1.0f);
+                alpha = ImPow(alpha, shadow_cfg->TexFalloffPower);  // Apply power curve to give a nicer falloff
+                tex_data[x + (y * size)] = alpha;
+            }
+
+        // Blur
+        if (shadow_cfg->TexBlur)
+            GaussianBlur(tex_data, size);
+
+        // Copy to texture, truncating to the actual required texture size (the bottom/right of the source data is chopped off, as we don't need it - see below). The truncated size is essentially the top 2x2 of our data, plus a little bit of padding for sampling.
+        const int tex_w = atlas->TexWidth;
+        const int shadow_tex_size = shadow_cfg->CalcRectTexSize();
+        for (int y = 0; y < shadow_tex_size; y++)
+            for (int x = 0; x < shadow_tex_size; x++)
+            {
+                const float alpha = tex_data[x + (y * size)];
+                const unsigned int offset = (int)(r.X + x) + (int)(r.Y + y) * tex_w;
+                atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * alpha);
+            }
+
+        // Generate UVs for each of the nine sections, which are arranged in a 3x3 grid starting from 0 in the top-left and going across then down
+        for (int i = 0; i < 9; i++)
         {
-        case 0: sub_rect.Width = (unsigned short)corner_size; break;
-        case 1: sub_rect.X += (unsigned short)corner_size; sub_rect.Width = (unsigned short)edge_size; break;
-        case 2: sub_rect.Width = (unsigned short)corner_size; flip_h = true; break;
-        }
+            ImFontAtlasCustomRect sub_rect = r;
 
-        switch (i / 3)
-        {
-        case 0: sub_rect.Height = (unsigned short)corner_size; break;
-        case 1: sub_rect.Y += (unsigned short)corner_size; sub_rect.Height = (unsigned short)edge_size; break;
-        case 2: sub_rect.Height = (unsigned short)corner_size; flip_v = true; break;
-        }
+            // The third row/column of the 3x3 grid are generated by flipping the appropriate chunks of the upper 2x2 grid.
+            bool flip_h = false; // Do we need to flip the UVs horizontally?
+            bool flip_v = false; // Do we need to flip the UVs vertically?
 
+            switch (i % 3)
+            {
+            case 0: sub_rect.Width = (unsigned short)corner_size; break;
+            case 1: sub_rect.X += (unsigned short)corner_size; sub_rect.Width = (unsigned short)edge_size; break;
+            case 2: sub_rect.Width = (unsigned short)corner_size; flip_h = true; break;
+            }
+
+            switch (i / 3)
+            {
+            case 0: sub_rect.Height = (unsigned short)corner_size; break;
+            case 1: sub_rect.Y += (unsigned short)corner_size; sub_rect.Height = (unsigned short)edge_size; break;
+            case 2: sub_rect.Height = (unsigned short)corner_size; flip_v = true; break;
+            }
+
+            ImVec2 uv0, uv1;
+            atlas->CalcCustomRectUV(&sub_rect, &uv0, &uv1);
+            atlas->ShadowRectUvs[i] = ImVec4(flip_h ? uv1.x : uv0.x, flip_v ? uv1.y : uv0.y, flip_h ? uv0.x : uv1.x, flip_v ? uv0.y : uv1.y);
+        }
+    }
+
+    // The convex shape shadow texture
+    {
+        const int size = shadow_cfg->TexCornerSize * 2;
+        const int padding = shadow_cfg->GetConvexTexPadding();
+
+        // Render the texture
+        ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectIds[1]];
+
+        // We draw the actual texture content by evaluating the distance field for the distance from a center point
+        // Generate distance field
+
+        ImVec2 center_point(size * 0.5f, size * 0.5f);
+
+        float* tex_data = (float*)alloca(size * size * sizeof(float));
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float dist = DistanceFromPoint(ImVec2((float)x, (float)y), center_point);
+                float alpha = 1.0f - ImMin(ImMax((float)dist /*+ shadow_cfg->TexDistanceFieldOffset*/, 0.0f) / ImMax((float)shadow_cfg->TexCornerSize /*+ shadow_cfg->TexDistanceFieldOffset*/, 0.001f), 1.0f);
+                alpha = ImPow(alpha, shadow_cfg->TexFalloffPower);  // Apply power curve to give a nicer falloff
+                tex_data[x + (y * size)] = alpha;
+            }
+
+        // Blur
+        if (shadow_cfg->TexBlur)
+            GaussianBlur(tex_data, size);
+
+        // Copy to texture, truncating to the actual required texture size (the bottom/right of the source data is chopped off, as we don't need it - see below)
+        // We push the data down and right by the amount we padded the top of the texture (see CalcConvexTexWidth/CalcConvexTexHeight) for details
+        const int padded_size = (int)(shadow_cfg->TexCornerSize / ImCos(IM_PI * 0.25f));
+        const int src_x_offset = padding + (padded_size - shadow_cfg->TexCornerSize);
+        const int src_y_offset = padding + (padded_size - shadow_cfg->TexCornerSize);
+
+        const int tex_width = shadow_cfg->CalcConvexTexWidth();
+        const int tex_height = shadow_cfg->CalcConvexTexHeight();
+        const int tex_w = atlas->TexWidth;
+        for (int y = 0; y < tex_height; y++)
+            for (int x = 0; x < tex_width; x++)
+            {
+                int srcX = ImClamp(x - src_x_offset, 0, size - 1);
+                int srcY = ImClamp(y - src_y_offset, 0, size - 1);
+
+                const float alpha = tex_data[srcX + (srcY * size)];
+                const unsigned int offset = (int)(r.X + x) + (int)(r.Y + y) * tex_w;
+                atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * alpha);
+            }
+
+        // Remove the padding we added
+        r.X += (unsigned short)padding;
+        r.Y += (unsigned short)padding;
+        r.Width = (unsigned short)(tex_width - (padding * 2));
+        r.Height = (unsigned short)(tex_height - (padding * 2));
+
+        // Generate UVs
         ImVec2 uv0, uv1;
-        atlas->CalcCustomRectUV(&sub_rect, &uv0, &uv1);
-        atlas->ShadowRectUvs[i] = ImVec4(flip_h ? uv1.x : uv0.x, flip_v ? uv1.y : uv0.y, flip_h ? uv0.x : uv1.x, flip_v ? uv0.y : uv1.y);
+        atlas->CalcCustomRectUV(&r, &uv0, &uv1);
+        atlas->ShadowRectUvs[9] = ImVec4(uv0.x, uv0.y, uv1.x, uv1.y);
     }
 }
 
