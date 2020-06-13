@@ -7048,10 +7048,11 @@ static void ShowExampleAppCustomRendering(bool* p_open)
         if (ImGui::BeginTabItem("Shadows"))
         {
             static float shadow_thickness = 40.0f;
-            static ImVec4 shadow_color = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
             static bool shadow_filled = false;
-            static ImVec4 shape_color = ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
+            static ImVec4 shadow_color = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+            static ImVec4 shape_color = ImVec4(0.9f, 0.0f, 0.0f, 1.0f);
             static float shape_rounding = 0.0f;
+            static ImVec4 bg_color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
             ImGui::Checkbox("Shadow filled", &shadow_filled);
             ImGui::SameLine();
             HelpMarker("This will fill the section behind the shape to shadow. It's often unnecessary and wasteful but provided for consistency.");
@@ -7060,12 +7061,14 @@ static void ShowExampleAppCustomRendering(bool* p_open)
             ImGui::ColorEdit4("Shadow Color", &shadow_color.x);
             ImGui::ColorEdit4("Shape Color", &shape_color.x);
             ImGui::DragFloat("Shape Rounding", &shape_rounding, 1.0f, 0.0f, 20.0f, "%.02f");
+            ImGui::ColorEdit4("Background Color", &bg_color.x);
 
             ImDrawList* draw_list = ImGui::GetWindowDrawList();
             {
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 ImVec2 r1(p.x + 50.0f, p.y + 50.0f);
                 ImVec2 r2(p.x + 150.0f, p.y + 150.0f);
+                draw_list->AddRectFilled(p, ImVec2(p.x + 200.0f, p.y + 200.0f), ImGui::GetColorU32(bg_color));
                 if (shadow_filled)
                     draw_list->AddShadowRectFilled(r1, r2, shadow_thickness, ImVec2(0.0f, 0.0f), ImGui::GetColorU32(shadow_color));
                 else
@@ -7074,20 +7077,17 @@ static void ShowExampleAppCustomRendering(bool* p_open)
                 ImGui::Dummy(ImVec2(200.0f, 200.0f));
             }
             {
-                // FIXME-SHADOWS: We properly need AddShadowCircle() api ?
                 ImVec2 p = ImGui::GetCursorScreenPos();
-                float off = 10.0f;
-                ImVec2 r1(p.x + 50.0f + off, p.y + 50.0f + off);
-                ImVec2 r2(p.x + 150.0f - off, p.y + 150.0f - off);
-                ImVec2 c(p.x + 100.0f, p.y + 100.0f);
+                ImVec2 center(p.x + 100.0f, p.y + 100.0f);
+                float radius = 50.0f;
+                draw_list->AddRectFilled(p, ImVec2(p.x + 200.0f, p.y + 200.0f), ImGui::GetColorU32(bg_color));
                 if (shadow_filled)
-                    draw_list->AddShadowRectFilled(r1, r2, shadow_thickness, ImVec2(0.0f, 0.0f), ImGui::GetColorU32(shadow_color));
+                    draw_list->AddShadowCircleFilled(center, radius, shadow_thickness, ImVec2(0.0f, 0.0f), ImGui::GetColorU32(shadow_color), 0);
                 else
-                    draw_list->AddShadowRect(r1, r2, shadow_thickness, ImVec2(0.0f, 0.0f), ImGui::GetColorU32(shadow_color), 50.0f);
-                draw_list->AddCircleFilled(c, 50.0f, ImGui::GetColorU32(shape_color), 0);
+                    draw_list->AddShadowCircle(center, radius, shadow_thickness, ImVec2(0.0f, 0.0f), ImGui::GetColorU32(shadow_color), 0);
+                draw_list->AddCircleFilled(center, radius, ImGui::GetColorU32(shape_color), 0);
                 ImGui::Dummy(ImVec2(200.0f, 200.0f));
             }
-
 
             ImGui::EndTabItem();
         }
