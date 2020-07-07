@@ -1915,7 +1915,15 @@ void ImDrawList::AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float s
 // Add a shadow for a convex shape described by points and num_points
 static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col, bool is_filled)
 {
-    IM_UNUSED(offset); // Offset not currently supported
+    IM_ASSERT((is_filled || (ImLengthSqr(offset) < 0.00001f)) && "Drawing circle/convex shape shadows with no center fill and an offset is not currently supported");
+    IM_ASSERT(num_points >= 3);
+
+    // Calculate poly vertex order
+    int vertex_winding = (((points[0].x * (points[1].y - points[2].y)) + (points[1].x * (points[2].y - points[0].y)) + (points[2].x * (points[0].y - points[1].y))) < 0.0f) ? -1 : 1;
+
+    // If we're using anti-aliasing, then inset the shadow by 0.5 pixels to avoid unpleasant fringing artifacts
+    const bool use_inset_distance = (draw_list->Flags & ImDrawListFlags_AntiAliasedFill) && (!is_filled);
+    const float inset_distance = 0.5f;
 
     const ImVec4 uvs = draw_list->_Data->ShadowRectUvs[9];
 
@@ -1938,16 +1946,54 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
     // Normalize a vector
 #define NORMALIZE(vec) ((vec) / ImLength((vec), 0.001f))
 
+    const int required_stack_mem = (num_edges * sizeof(ImVec2)) + (num_edges * sizeof(float));
+    const ImU8* base_mem_for_normals_and_edges = (ImU8*)alloca(required_stack_mem);
+    ImU8* mem_for_normals_and_edges = (ImU8*)base_mem_for_normals_and_edges;
+
     // Calculate edge normals
-    ImVec2* edge_normals = (ImVec2*)alloca(num_edges * sizeof(ImVec2));
+    ImVec2* edge_normals = (ImVec2*)mem_for_normals_and_edges;
+    mem_for_normals_and_edges += num_edges * sizeof(ImVec2);
 
     for (int edge_index = 0; edge_index < num_edges; edge_index++)
     {
-        ImVec2 edge_start = points[edge_index];
+        ImVec2 edge_start = points[edge_index]; // No need to apply offset here because the normal is unaffected
         ImVec2 edge_end = points[(edge_index + 1) % num_edges];
         ImVec2 edge_normal = NORMALIZE(ImVec2(edge_end.y - edge_start.y, -(edge_end.x - edge_start.x)));
 
-        edge_normals[edge_index] = edge_normal;
+        edge_normals[edge_index] = edge_normal * (float)vertex_winding; // Flip normals for reverse winding
+    }
+
+    // Pre-calculate edge scales
+    // We need to do this because we need the edge strips to have widths that match up with the corner sections, otherwise pixel cracking can occur along the boundaries
+    float* edge_size_scales = (float*)mem_for_normals_and_edges;
+    mem_for_normals_and_edges += num_edges * sizeof(float);
+    IM_ASSERT_PARANOID(mem_for_normals_and_edges == (base_mem_for_normals_and_edges + required_stack_mem)); // Check we used exactly what we allocated
+
+    {
+        ImVec2 prev_edge_normal = edge_normals[num_edges - 1];
+
+        for (int edge_index = 0; edge_index < num_edges; edge_index++)
+        {
+            ImVec2 edge_normal = edge_normals[edge_index];
+            float cos_angle_coverage = ImDot(edge_normal, prev_edge_normal);
+
+            if (cos_angle_coverage < 0.999999f)
+            {
+                float angle_coverage = ImAcos(cos_angle_coverage);
+
+                // If we are covering more than 90 degrees we need an intermediate vertex to stop the required expansion tending towards infinity, and thus the effective angle will be halved
+                if (cos_angle_coverage <= 0.0f)
+                    angle_coverage *= 0.5f;
+
+                edge_size_scales[edge_index] = 1.0f / ImCos(angle_coverage * 0.5f); // How much we need to expand our size by to avoid clipping the corner of the texture off
+            }
+            else
+            {
+                edge_size_scales[edge_index] = 1.0f; // No corner, thus default scale
+            }
+
+            prev_edge_normal = edge_normal;
+        }
     }
 
     const int max_vertices = (4 + (3 * 2) + (is_filled ? 1 : 0)) * num_edges; // 4 vertices per edge plus 3*2 for potentially two corner triangles, plus one per vertex for fill
@@ -1957,14 +2003,22 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
     ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
     ImDrawIdx current_idx = (ImDrawIdx)draw_list->_VtxCurrentIdx;
 
-    //ImVec2 previous_edge_start = points[0];
-    ImVec2 edge_start = points[0];
+    ImVec2 previous_edge_start = points[0] + offset;
     ImVec2 prev_edge_normal = edge_normals[num_edges - 1];
+    ImVec2 edge_start = points[0] + offset;
+
+    if (use_inset_distance)
+        edge_start -= NORMALIZE(edge_normals[0] + prev_edge_normal) * inset_distance;
 
     for (int edge_index = 0; edge_index < num_edges; edge_index++)
-    {
-        const ImVec2 edge_end = points[(edge_index + 1) % num_edges];
+    {        
+        ImVec2 edge_end = points[(edge_index + 1) % num_edges] + offset;
         ImVec2 edge_normal = edge_normals[edge_index];
+        const float size_scale_start = edge_size_scales[edge_index];
+        const float size_scale_end = edge_size_scales[(edge_index + 1) % num_edges];
+
+        if (use_inset_distance)
+            edge_end -= NORMALIZE(edge_normals[(edge_index + 1) % num_edges] + edge_normal) * inset_distance;
 
         // Add corner section
         float cos_angle_coverage = ImDot(edge_normal, prev_edge_normal);
@@ -1988,14 +2042,12 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
 
                 // Calculate UV for the section of the curved texture
 
-                float angle_coverage = ImAcos(cos_angle_coverage);
-                float sin_angle_coverage = ImSin(angle_coverage);
-
-                float size_scale = 1.0f / ImCos(angle_coverage * 0.5f); // How much we need to expand our size by to avoid clipping the corner of the texture off
+                const float angle_coverage = ImAcos(cos_angle_coverage);
+                const float sin_angle_coverage = ImSin(angle_coverage);
 
                 ImVec2 edge_delta = solid_to_edge_delta_texels;
 
-                edge_delta *= size_scale;
+                edge_delta *= size_scale_start;
 
                 ImVec2 rotated_edge_delta = ImVec2((edge_delta.x * cos_angle_coverage) + (edge_delta.y * sin_angle_coverage), (edge_delta.x * sin_angle_coverage) + (edge_delta.y * cos_angle_coverage));
 
@@ -2008,7 +2060,7 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
                 ImVec2 expanded_edge_uv = solid_uv + edge_delta;
                 ImVec2 other_edge_uv = solid_uv + rotated_edge_delta; // Rotated UV to encompass the necessary section of the curve
 
-                float expanded_thickness = shadow_thickness * size_scale;
+                float expanded_thickness = shadow_thickness * size_scale_start;
 
                 // Add a triangle to fill the corner
                 ImVec2 outer_edge_start = edge_start + (prev_edge_normal * expanded_thickness);
@@ -2032,14 +2084,17 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
 
         if (edge_length > 0.00001f) // Don't try and process degenerate edges
         {
-            ImVec2 outer_edge_start = edge_start + (edge_normal * shadow_thickness);
-            ImVec2 outer_edge_end = edge_end + (edge_normal * shadow_thickness);
+            ImVec2 outer_edge_start = edge_start + (edge_normal * shadow_thickness * size_scale_start);
+            ImVec2 outer_edge_end = edge_end + (edge_normal * shadow_thickness * size_scale_end);
+
+            ImVec2 scaled_edge_uv_start = solid_uv + ((edge_uv - solid_uv) * size_scale_start);
+            ImVec2 scaled_edge_uv_end = solid_uv + ((edge_uv - solid_uv) * size_scale_end);
 
             // Write vertices, inner first, then outer
             vtx_write->pos = edge_start; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
             vtx_write->pos = edge_end; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
-            vtx_write->pos = outer_edge_end; vtx_write->col = col; vtx_write->uv = edge_uv; vtx_write++;
-            vtx_write->pos = outer_edge_start; vtx_write->col = col; vtx_write->uv = edge_uv; vtx_write++;
+            vtx_write->pos = outer_edge_end; vtx_write->col = col; vtx_write->uv = scaled_edge_uv_end; vtx_write++;
+            vtx_write->pos = outer_edge_start; vtx_write->col = col; vtx_write->uv = scaled_edge_uv_start; vtx_write++;
 
             *(idx_write++) = current_idx;
             *(idx_write++) = current_idx + 1;
@@ -2058,7 +2113,7 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
         // Add vertices
         for (int edge_index = 0; edge_index < num_edges; edge_index++)
         {
-            vtx_write->pos = points[edge_index]; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
+            vtx_write->pos = points[edge_index] + offset; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
         }
 
         // Add tris
@@ -3383,7 +3438,7 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
             for (int x = 0; x < size; x++)
             {
                 float dist = DistanceFromPoint(ImVec2((float)x, (float)y), center_point);
-                float alpha = 1.0f - ImMin(ImMax((float)dist /*+ shadow_cfg->TexDistanceFieldOffset*/, 0.0f) / ImMax((float)shadow_cfg->TexCornerSize /*+ shadow_cfg->TexDistanceFieldOffset*/, 0.001f), 1.0f);
+                float alpha = 1.0f - ImMin(ImMax((float)dist + shadow_cfg->TexDistanceFieldOffset, 0.0f) / ImMax((float)shadow_cfg->TexCornerSize + shadow_cfg->TexDistanceFieldOffset, 0.001f), 1.0f);
                 alpha = ImPow(alpha, shadow_cfg->TexFalloffPower);  // Apply power curve to give a nicer falloff
                 tex_data[x + (y * size)] = alpha;
             }
