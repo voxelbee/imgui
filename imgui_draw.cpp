@@ -1842,25 +1842,29 @@ static void AddSubtractedRect(ImDrawList* draw_list, const ImVec2& a_min, const 
     }
 }
 
-static void AddShadowRectEx(ImDrawList* draw_list, const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding, ImDrawCornerFlags rounding_corners, bool is_filled)
+void ImDrawList::AddShadowRect(const ImVec2& obj_min, const ImVec2& obj_max, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags, float obj_rounding, ImDrawCornerFlags obj_rounding_corners)
 {
+    if ((shadow_col & IM_COL32_A_MASK) == 0)
+        return;
+
     ImVec2* inner_rect_points = NULL; // Points that make up the shape of the inner rectangle (used when it has rounded corners)
     int inner_rect_points_count = 0;
 
     // Generate a path describing the inner rectangle and copy it to our buffer
-    const bool is_rounded = (rounding > 0.0f) && (rounding_corners != ImDrawCornerFlags_None); // Do we have rounded corners?
+    const bool is_filled = (shadow_flags & ImDrawShadowFlags_CutOutShapeBackground) == 0;
+    const bool is_rounded = (obj_rounding > 0.0f) && (obj_rounding_corners != ImDrawCornerFlags_None); // Do we have rounded corners?
     if (is_rounded && !is_filled)
     {
-        IM_ASSERT(draw_list->_Path.Size == 0);
-        draw_list->PathRect(p_min, p_max, rounding, rounding_corners);
-        inner_rect_points_count = draw_list->_Path.Size;
+        IM_ASSERT(_Path.Size == 0);
+        PathRect(obj_min, obj_max, obj_rounding, obj_rounding_corners);
+        inner_rect_points_count = _Path.Size;
         inner_rect_points = (ImVec2*)alloca(inner_rect_points_count * sizeof(ImVec2)); //-V630
-        memcpy(inner_rect_points, draw_list->_Path.Data, inner_rect_points_count * sizeof(ImVec2));
-        draw_list->_Path.Size = 0;
+        memcpy(inner_rect_points, _Path.Data, inner_rect_points_count * sizeof(ImVec2));
+        _Path.Size = 0;
     }
 
     if (is_filled)
-        draw_list->PrimReserve(6 * 9, 4 * 9); // Reserve space for adding unclipped chunks
+        PrimReserve(6 * 9, 4 * 9); // Reserve space for adding unclipped chunks
 
     // Draw the relevant chunks of the texture (the texture is split into a 3x3 grid)
     for (int x = 0; x < 3; x++)
@@ -1868,67 +1872,52 @@ static void AddShadowRectEx(ImDrawList* draw_list, const ImVec2& p_min, const Im
         for (int y = 0; y < 3; y++)
         {
             const int uv_index = x + (y + y + y); // y*3 formatted so as to ensure the compiler avoids an actual multiply
-            const ImVec4 uvs = draw_list->_Data->ShadowRectUvs[uv_index];
+            const ImVec4 uvs = _Data->ShadowRectUvs[uv_index];
 
             ImVec2 draw_min, draw_max;
             switch (x)
             {
-            case 0: draw_min.x = p_min.x - shadow_thickness; draw_max.x = p_min.x; break;
-            case 1: draw_min.x = p_min.x; draw_max.x = p_max.x; break;
-            case 2: draw_min.x = p_max.x; draw_max.x = p_max.x + shadow_thickness; break;
+            case 0: draw_min.x = obj_min.x - shadow_thickness; draw_max.x = obj_min.x; break;
+            case 1: draw_min.x = obj_min.x; draw_max.x = obj_max.x; break;
+            case 2: draw_min.x = obj_max.x; draw_max.x = obj_max.x + shadow_thickness; break;
             }
             switch (y)
             {
-            case 0: draw_min.y = p_min.y - shadow_thickness; draw_max.y = p_min.y; break;
-            case 1: draw_min.y = p_min.y; draw_max.y = p_max.y; break;
-            case 2: draw_min.y = p_max.y; draw_max.y = p_max.y + shadow_thickness; break;
+            case 0: draw_min.y = obj_min.y - shadow_thickness; draw_max.y = obj_min.y; break;
+            case 1: draw_min.y = obj_min.y; draw_max.y = obj_max.y; break;
+            case 2: draw_min.y = obj_max.y; draw_max.y = obj_max.y + shadow_thickness; break;
             }
 
             ImVec2 uv_min(uvs.x, uvs.y);
             ImVec2 uv_max(uvs.z, uvs.w);
             if (is_filled)
-                draw_list->PrimRectUV(draw_min + offset, draw_max + offset, uv_min, uv_max, col); // No clipping path (draw entire shadow)
+                PrimRectUV(draw_min + shadow_offset, draw_max + shadow_offset, uv_min, uv_max, shadow_col); // No clipping path (draw entire shadow)
             else if (is_rounded)
-                AddSubtractedRect(draw_list, draw_min + offset, draw_max + offset, uv_min, uv_max, inner_rect_points, inner_rect_points_count, col); // Complex path for rounded rectangles
+                AddSubtractedRect(this, draw_min + shadow_offset, draw_max + shadow_offset, uv_min, uv_max, inner_rect_points, inner_rect_points_count, shadow_col); // Complex path for rounded rectangles
             else
-                AddSubtractedRect(draw_list, draw_min + offset, draw_max + offset, uv_min, uv_max, p_min, p_max, col); // Simple fast path for non-rounded rectangles
+                AddSubtractedRect(this, draw_min + shadow_offset, draw_max + shadow_offset, uv_min, uv_max, obj_min, obj_max, shadow_col); // Simple fast path for non-rounded rectangles
         }
     }
 }
 
-void ImDrawList::AddShadowRectFilled(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col)
-{
-    if ((col & IM_COL32_A_MASK) == 0)
-        return;
-
-    AddShadowRectEx(this, p_min, p_max, shadow_thickness, offset, col, 0.0f, ImDrawCornerFlags_None, true);
-}
-
-void ImDrawList::AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding, ImDrawCornerFlags rounding_corners)
-{
-    if ((col & IM_COL32_A_MASK) == 0)
-        return;
-
-    AddShadowRectEx(this, p_min, p_max, shadow_thickness, offset, col, rounding, rounding_corners, false);
-}
-
 // Add a shadow for a convex shape described by points and num_points
-static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col, bool is_filled)
+void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags)
 {
-    IM_ASSERT((is_filled || (ImLengthSqr(offset) < 0.00001f)) && "Drawing circle/convex shape shadows with no center fill and an offset is not currently supported");
-    IM_ASSERT(num_points >= 3);
+    const bool is_filled = (shadow_flags & ImDrawShadowFlags_CutOutShapeBackground) == 0;
+    IM_ASSERT((is_filled || (ImLengthSqr(shadow_offset) < 0.00001f)) && "Drawing circle/convex shape shadows with no center fill and an offset is not currently supported");
+    IM_ASSERT(points_count >= 3);
 
     // Calculate poly vertex order
     int vertex_winding = (((points[0].x * (points[1].y - points[2].y)) + (points[1].x * (points[2].y - points[0].y)) + (points[2].x * (points[0].y - points[1].y))) < 0.0f) ? -1 : 1;
 
     // If we're using anti-aliasing, then inset the shadow by 0.5 pixels to avoid unpleasant fringing artifacts
-    const bool use_inset_distance = (draw_list->Flags & ImDrawListFlags_AntiAliasedFill) && (!is_filled);
+    const bool use_inset_distance = (Flags & ImDrawListFlags_AntiAliasedFill) && (!is_filled);
     const float inset_distance = 0.5f;
 
-    const ImVec4 uvs = draw_list->_Data->ShadowRectUvs[9];
+    const ImVec4 uvs = _Data->ShadowRectUvs[9];
 
-    int tex_width = draw_list->_Data->Font->ContainerAtlas->TexWidth;
-    int tex_height = draw_list->_Data->Font->ContainerAtlas->TexHeight;
+    int tex_width = _Data->Font->ContainerAtlas->TexWidth;
+    int tex_height = _Data->Font->ContainerAtlas->TexHeight;
     float inv_tex_width = 1.0f / (float)tex_width;
     float inv_tex_height = 1.0f / (float)tex_height;
 
@@ -1941,17 +1930,17 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
 
     // Our basic algorithm here is that we generate a straight section along each edge, and then either one or two curved corner triangles at the corners,
     // which use an appropriate chunk of the texture to generate a smooth curve.
-    const int num_edges = num_points;
+    const int num_edges = points_count;
 
     // Normalize a vector
 #define NORMALIZE(vec) ((vec) / ImLength((vec), 0.001f))
 
     const int required_stack_mem = (num_edges * sizeof(ImVec2)) + (num_edges * sizeof(float));
-    const ImU8* base_mem_for_normals_and_edges = (ImU8*)alloca(required_stack_mem);
+    ImU8* base_mem_for_normals_and_edges = (ImU8*)alloca(required_stack_mem);
     ImU8* mem_for_normals_and_edges = (ImU8*)base_mem_for_normals_and_edges;
 
     // Calculate edge normals
-    ImVec2* edge_normals = (ImVec2*)mem_for_normals_and_edges;
+    ImVec2* edge_normals = (ImVec2*)(void*)mem_for_normals_and_edges;
     mem_for_normals_and_edges += num_edges * sizeof(ImVec2);
 
     for (int edge_index = 0; edge_index < num_edges; edge_index++)
@@ -1965,7 +1954,7 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
 
     // Pre-calculate edge scales
     // We need to do this because we need the edge strips to have widths that match up with the corner sections, otherwise pixel cracking can occur along the boundaries
-    float* edge_size_scales = (float*)mem_for_normals_and_edges;
+    float* edge_size_scales = (float*)(void*)mem_for_normals_and_edges;
     mem_for_normals_and_edges += num_edges * sizeof(float);
     IM_ASSERT_PARANOID(mem_for_normals_and_edges == (base_mem_for_normals_and_edges + required_stack_mem)); // Check we used exactly what we allocated
 
@@ -1998,21 +1987,21 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
 
     const int max_vertices = (4 + (3 * 2) + (is_filled ? 1 : 0)) * num_edges; // 4 vertices per edge plus 3*2 for potentially two corner triangles, plus one per vertex for fill
     const int max_indices = ((6 + (3 * 2)) * num_edges) + (is_filled ? ((num_edges - 2) * 3) : 0); // 2 tris per edge plus up to two corner triangles, plus fill triangles
-    draw_list->PrimReserve(max_indices, max_vertices);
-    ImDrawIdx* idx_write = draw_list->_IdxWritePtr;
-    ImDrawVert* vtx_write = draw_list->_VtxWritePtr;
-    ImDrawIdx current_idx = (ImDrawIdx)draw_list->_VtxCurrentIdx;
+    PrimReserve(max_indices, max_vertices);
+    ImDrawIdx* idx_write = _IdxWritePtr;
+    ImDrawVert* vtx_write = _VtxWritePtr;
+    ImDrawIdx current_idx = (ImDrawIdx)_VtxCurrentIdx;
 
-    ImVec2 previous_edge_start = points[0] + offset;
+    //ImVec2 previous_edge_start = points[0] + offset;
     ImVec2 prev_edge_normal = edge_normals[num_edges - 1];
-    ImVec2 edge_start = points[0] + offset;
+    ImVec2 edge_start = points[0] + shadow_offset;
 
     if (use_inset_distance)
         edge_start -= NORMALIZE(edge_normals[0] + prev_edge_normal) * inset_distance;
 
     for (int edge_index = 0; edge_index < num_edges; edge_index++)
-    {        
-        ImVec2 edge_end = points[(edge_index + 1) % num_edges] + offset;
+    {
+        ImVec2 edge_end = points[(edge_index + 1) % num_edges] + shadow_offset;
         ImVec2 edge_normal = edge_normals[edge_index];
         const float size_scale_start = edge_size_scales[edge_index];
         const float size_scale_end = edge_size_scales[(edge_index + 1) % num_edges];
@@ -2066,9 +2055,9 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
                 ImVec2 outer_edge_start = edge_start + (prev_edge_normal * expanded_thickness);
                 ImVec2 outer_edge_end = edge_start + (edge_normal * expanded_thickness);
 
-                vtx_write->pos = edge_start; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
-                vtx_write->pos = outer_edge_end; vtx_write->col = col; vtx_write->uv = expanded_edge_uv; vtx_write++;
-                vtx_write->pos = outer_edge_start; vtx_write->col = col; vtx_write->uv = other_edge_uv; vtx_write++;
+                vtx_write->pos = edge_start; vtx_write->col = shadow_col; vtx_write->uv = solid_uv; vtx_write++;
+                vtx_write->pos = outer_edge_end; vtx_write->col = shadow_col; vtx_write->uv = expanded_edge_uv; vtx_write++;
+                vtx_write->pos = outer_edge_start; vtx_write->col = shadow_col; vtx_write->uv = other_edge_uv; vtx_write++;
 
                 *(idx_write++) = current_idx;
                 *(idx_write++) = current_idx + 1;
@@ -2091,10 +2080,10 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
             ImVec2 scaled_edge_uv_end = solid_uv + ((edge_uv - solid_uv) * size_scale_end);
 
             // Write vertices, inner first, then outer
-            vtx_write->pos = edge_start; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
-            vtx_write->pos = edge_end; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
-            vtx_write->pos = outer_edge_end; vtx_write->col = col; vtx_write->uv = scaled_edge_uv_end; vtx_write++;
-            vtx_write->pos = outer_edge_start; vtx_write->col = col; vtx_write->uv = scaled_edge_uv_start; vtx_write++;
+            vtx_write->pos = edge_start; vtx_write->col = shadow_col; vtx_write->uv = solid_uv; vtx_write++;
+            vtx_write->pos = edge_end; vtx_write->col = shadow_col; vtx_write->uv = solid_uv; vtx_write++;
+            vtx_write->pos = outer_edge_end; vtx_write->col = shadow_col; vtx_write->uv = scaled_edge_uv_end; vtx_write++;
+            vtx_write->pos = outer_edge_start; vtx_write->col = shadow_col; vtx_write->uv = scaled_edge_uv_start; vtx_write++;
 
             *(idx_write++) = current_idx;
             *(idx_write++) = current_idx + 1;
@@ -2113,10 +2102,13 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
         // Add vertices
         for (int edge_index = 0; edge_index < num_edges; edge_index++)
         {
-            vtx_write->pos = points[edge_index] + offset; vtx_write->col = col; vtx_write->uv = solid_uv; vtx_write++;
+            vtx_write->pos = points[edge_index] + shadow_offset;
+            vtx_write->col = shadow_col;
+            vtx_write->uv = solid_uv;
+            vtx_write++;
         }
 
-        // Add tris
+        // Add triangles
         for (int edge_index = 2; edge_index < num_edges; edge_index++)
         {
             *(idx_write++) = current_idx;
@@ -2128,28 +2120,28 @@ static void AddShadowConvexShapeEx(ImDrawList* draw_list, const ImVec2* points, 
     }
 
     // Release any unused vertices/indices
-    int used_indices = (int)(idx_write - draw_list->_IdxWritePtr);
-    int used_vertices = (int)(vtx_write - draw_list->_VtxWritePtr);
-    draw_list->_IdxWritePtr = idx_write;
-    draw_list->_VtxWritePtr = vtx_write;
-    draw_list->_VtxCurrentIdx = current_idx;
-    draw_list->PrimUnreserve(max_indices - used_indices, max_vertices - used_vertices);
+    int used_indices = (int)(idx_write - _IdxWritePtr);
+    int used_vertices = (int)(vtx_write - _VtxWritePtr);
+    _IdxWritePtr = idx_write;
+    _VtxWritePtr = vtx_write;
+    _VtxCurrentIdx = current_idx;
+    PrimUnreserve(max_indices - used_indices, max_vertices - used_vertices);
 #undef NORMALIZE
 }
 
 // Draw a shadow for a circular object
 // Uses the draw path and so wipes any existing data there
-static void AddShadowCircleEx(ImDrawList* draw_list, const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments, bool is_filled)
+void ImDrawList::AddShadowCircle(const ImVec2& obj_center, float obj_radius, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags, int num_segments)
 {
     // Obtain segment count
     if (num_segments <= 0)
     {
         // Automatic segment count
-        const int radius_idx = (int)radius - 1;
-        if (radius_idx < IM_ARRAYSIZE(draw_list->_Data->CircleSegmentCounts))
-            num_segments = draw_list->_Data->CircleSegmentCounts[radius_idx]; // Use cached value
+        const int radius_idx = (int)obj_radius - 1;
+        if (radius_idx < IM_ARRAYSIZE(_Data->CircleSegmentCounts))
+            num_segments = _Data->CircleSegmentCounts[radius_idx]; // Use cached value
         else
-            num_segments = IM_DRAWLIST_CIRCLE_AUTO_SEGMENT_CALC(radius, draw_list->_Data->CircleSegmentMaxError);
+            num_segments = IM_DRAWLIST_CIRCLE_AUTO_SEGMENT_CALC(obj_radius, _Data->CircleSegmentMaxError);
     }
     else
     {
@@ -2158,68 +2150,16 @@ static void AddShadowCircleEx(ImDrawList* draw_list, const ImVec2& center, float
     }
 
     // Generate a path describing the inner circle and copy it to our buffer
-
-    IM_ASSERT(draw_list->_Path.Size == 0);
-
+    IM_ASSERT(_Path.Size == 0);
     const float a_max = (IM_PI * 2.0f) * ((float)num_segments - 1.0f) / (float)num_segments;
     if (num_segments == 12)
-        draw_list->PathArcToFast(center, radius, 0, 11);
+        PathArcToFast(obj_center, obj_radius, 0, 12 - 1);
     else
-        draw_list->PathArcTo(center, radius, 0.0f, a_max, num_segments - 1);
+        PathArcTo(obj_center, obj_radius, 0.0f, a_max, num_segments - 1);
 
     // Draw the shadow using the convex shape code
-    AddShadowConvexShapeEx(draw_list, draw_list->_Path.Data, draw_list->_Path.Size, shadow_thickness, offset, col, is_filled);
-
-    // Clear the path we generated
-    draw_list->_Path.Size = 0;
-}
-
-void ImDrawList::AddShadowCircle(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments)
-{
-    if (((col & IM_COL32_A_MASK) == 0) || (radius <= 0))
-        return;
-
-    AddShadowCircleEx(this, center, radius, shadow_thickness, offset, col, num_segments, false);
-}
-
-void ImDrawList::AddShadowCircleFilled(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments)
-{
-    if (((col & IM_COL32_A_MASK) == 0) || (radius <= 0))
-        return;
-
-    AddShadowCircleEx(this, center, radius, shadow_thickness, offset, col, num_segments, true);
-}
-
-void ImDrawList::AddShadowNGon(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments)
-{
-    if (((col & IM_COL32_A_MASK) == 0) || (radius <= 0))
-        return;
-
-    AddShadowCircleEx(this, center, radius, shadow_thickness, offset, col, num_segments, false);
-}
-
-void ImDrawList::AddShadowNGonFilled(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments)
-{
-    if (((col & IM_COL32_A_MASK) == 0) || (radius <= 0))
-        return;
-
-    AddShadowCircleEx(this, center, radius, shadow_thickness, offset, col, num_segments, true);
-}
-
-void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col)
-{
-    if ((col & IM_COL32_A_MASK) == 0)
-        return;
-
-    AddShadowConvexShapeEx(this, points, num_points, shadow_thickness, offset, col, false);
-}
-
-void ImDrawList::AddShadowConvexPolyFilled(const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col)
-{
-    if ((col & IM_COL32_A_MASK) == 0)
-        return;
-
-    AddShadowConvexShapeEx(this, points, num_points, shadow_thickness, offset, col, true);
+    AddShadowConvexPoly(_Path.Data, _Path.Size, shadow_col, shadow_thickness, shadow_offset, shadow_flags);
+    _Path.Size = 0;
 }
 
 //-----------------------------------------------------------------------------

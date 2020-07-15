@@ -160,6 +160,7 @@ typedef int ImGuiStyleVar;          // -> enum ImGuiStyleVar_        // Enum: A 
 typedef int ImGuiTableBgTarget;     // -> enum ImGuiTableBgTarget_   // Enum: A color target for TableSetBgColor()
 typedef int ImDrawCornerFlags;      // -> enum ImDrawCornerFlags_    // Flags: for ImDrawList::AddRect(), AddRectFilled() etc.
 typedef int ImDrawListFlags;        // -> enum ImDrawListFlags_      // Flags: for ImDrawList
+typedef int ImDrawShadowFlags;      // -> enum ImDrawShadowFlags_    // Flags: for ImDrawList::AddShadowRect(), AddShadowCircle() etc.
 typedef int ImFontAtlasFlags;       // -> enum ImFontAtlasFlags_     // Flags: for ImFontAtlas build
 typedef int ImGuiBackendFlags;      // -> enum ImGuiBackendFlags_    // Flags: for io.BackendFlags
 typedef int ImGuiButtonFlags;       // -> enum ImGuiButtonFlags_     // Flags: for InvisibleButton()
@@ -2290,6 +2291,13 @@ enum ImDrawCornerFlags_
     ImDrawCornerFlags_All       = 0xF     // In your function calls you may use ~0 (= all bits sets) instead of ImDrawCornerFlags_All, as a convenience
 };
 
+// Flags for ImDrawList::AddShadowRect(), AddShadowCircle() etc.
+enum ImDrawShadowFlags_
+{
+    ImDrawShadowFlags_None                  = 0,
+    ImDrawShadowFlags_CutOutShapeBackground = 1 << 0   // Do not render the shadow shape under the objects to be shadowed to save on fill-rate or facilitate blending. Slower on CPU.
+};
+
 // Flags for ImDrawList. Those are set automatically by ImGui:: functions from ImGuiIO settings, and generally not manipulated directly.
 // It is however possible to temporarily alter flags between calls to ImDrawList:: functions.
 enum ImDrawListFlags_
@@ -2375,17 +2383,19 @@ struct ImDrawList
 
     // Shadows primitives
     // [BETA] API
-    // - Add a shadow for a rectangular object, with min-max giving the object extents, and offset shifting the shadow. Rounding parameters refer to the object itself, not the shadow.
-    // - The filled parameter causes the shadow "under" the object to be drawn as well. In the vast majority of cases, filled shadows are unnecessary and wasteful. We still provide the primitives for consistency and flexibility.
+    // - Add shadow for a object, with min/max or center/radius describing the object extents, and offset shifting the shadow.
+    // - Rounding parameters refer to the object itself, not the shadow!
+    // - By default, the area under the object is filled, because this is simpler to process.
+    //   Using the ImDrawShadowFlags_CutOutShapeBackground flag makes the function not render this area and leave a hole under the object.
+    //    - Shadows w/ fill under the object: a bit faster for CPU, more pixels rendered, visible/darkening if used behind a transparent shape.
+    //      Typically used by: small, frequent objects, opaque objects, transparent objects if shadow darkening isn't an issue.
+    //    - Shadows w/ hole under the object: a bit slower for CPU, less pixels rendered, no difference if used behind a transparent shape.
+    //      Typically used by: large, infrequent objects, transparent objects if exact blending/color matter.
+    // - FIXME-SHADOWS: 'offset' + ImDrawShadowFlags_CutOutBackground are not currently supported together with AddShadowCircle(), AddShadowConvexPoly().
     #define IMGUI_HAS_SHADOWS 1
-    IMGUI_API void  AddShadowRect(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col, float rounding = 0.0f, ImDrawCornerFlags rounding_corners = ImDrawCornerFlags_All);
-    IMGUI_API void  AddShadowRectFilled(const ImVec2& p_min, const ImVec2& p_max, float shadow_thickness, const ImVec2& offset, ImU32 col);
-    IMGUI_API void  AddShadowCircle(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments = 12); // Offset not currently supported
-    IMGUI_API void  AddShadowCircleFilled(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments = 12); // Offset not currently supported
-    IMGUI_API void  AddShadowNGon(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments); // Offset not currently supported
-    IMGUI_API void  AddShadowNGonFilled(const ImVec2& center, float radius, float shadow_thickness, const ImVec2& offset, ImU32 col, int num_segments); // Offset not currently supported
-    IMGUI_API void  AddShadowConvexPoly(const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col); // Offset not currently supported
-    IMGUI_API void  AddShadowConvexPolyFilled(const ImVec2* points, int num_points, float shadow_thickness, const ImVec2& offset, ImU32 col); // Offset not currently supported
+    IMGUI_API void  AddShadowRect(const ImVec2& obj_min, const ImVec2& obj_max, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags = 0, float obj_rounding = 0.0f, ImDrawCornerFlags obj_rounding_corners = ImDrawCornerFlags_All);
+    IMGUI_API void  AddShadowCircle(const ImVec2& obj_center, float obj_radius, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags = 0, int obj_num_segments = 12);
+    IMGUI_API void  AddShadowConvexPoly(const ImVec2* points, int points_count, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags = 0);
 
     // Stateful path API, add points then finish with PathFillConvex() or PathStroke()
     inline    void  PathClear()                                                 { _Path.Size = 0; }
