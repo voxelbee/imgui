@@ -1456,18 +1456,17 @@ void ImDrawList::AddImageRounded(ImTextureID user_texture_id, const ImVec2& p_mi
 static void AddSubtractedRect(ImDrawList* draw_list, const ImVec2& a_min, const ImVec2& a_max, const ImVec2& a_min_uv, const ImVec2& a_max_uv, ImVec2 b_min, ImVec2 b_max, ImU32 col)
 {
     // Early out without drawing anything if A is zero-size
-    if ((a_min.x >= a_max.x) || (a_min.y >= a_max.y))
+    if (a_min.x >= a_max.x || a_min.y >= a_max.y)
         return;
 
     // Early out without drawing anything if B covers A entirely
-    if ((a_min.x >= b_min.x) && (a_max.x <= b_max.x) && (a_min.y >= b_min.y) && (a_max.y <= b_max.y))
+    if (a_min.x >= b_min.x && a_max.x <= b_max.x && a_min.y >= b_min.y && a_max.y <= b_max.y)
         return;
 
     // First clip the extents of B to A
     b_min = ImMax(b_min, a_min);
     b_max = ImMin(b_max, a_max);
-
-    if ((b_min.x >= b_max.x) || (b_min.y >= b_max.y))
+    if (b_min.x >= b_max.x || b_min.y >= b_max.y)
     {
         // B is entirely outside A, so just draw A as-is
         draw_list->PrimReserve(6, 4);
@@ -1476,7 +1475,6 @@ static void AddSubtractedRect(ImDrawList* draw_list, const ImVec2& a_min, const 
     }
 
     // Otherwise we need to emit (up to) four quads to cover the visible area...
-    //
     // Our layout looks like this (numbers are vertex indices, letters are quads):
     //
     // 0---8------9-----1
@@ -1607,11 +1605,11 @@ static int ClipPolygonShape(ImVec2* src_points, int num_src_points, ImVec2* dest
         if ((outflags_ored & clip_plane_bit) == 0)
             continue; // All vertices are inside this plane, so no need to clip
 
-        ImVec2* read_vert = &clip_buf[read_buffer_idx][0]; // Clip buffer vertex we are currently reading
-        ImVec2* write_vert = &clip_buf[1 - read_buffer_idx][0]; // Clip buffer vertex we are currently writing
-        ImVec2* write_vert_end = write_vert + allocated_dest_points; // End of the write buffer
-        ImU8* read_outflags = &outflags[read_buffer_idx][0]; // Out-flag we are currently reading
-        ImU8* write_outflags = &outflags[1 - read_buffer_idx][0]; // Out-flag we are currently writing
+        ImVec2* read_vert = &clip_buf[read_buffer_idx][0];              // Clip buffer vertex we are currently reading
+        ImVec2* write_vert = &clip_buf[1 - read_buffer_idx][0];         // Clip buffer vertex we are currently writing
+        ImVec2* write_vert_end = write_vert + allocated_dest_points;    // End of the write buffer
+        ImU8* read_outflags = &outflags[read_buffer_idx][0];            // Out-flag we are currently reading
+        ImU8* write_outflags = &outflags[1 - read_buffer_idx][0];       // Out-flag we are currently writing
 
         // Keep track of the last vertex visited, initially the last in the list
         ImVec2* last_vert = &read_vert[clip_buf_size - 1];
@@ -1683,11 +1681,10 @@ static int ClipPolygonShape(ImVec2* src_points, int num_src_points, ImVec2* dest
     for (int i = 0; i < clip_buf_size; i++)
     {
         ImVec2 vert = clip_buf[read_buffer_idx][i];
-        if (ImLengthSqr(vert - last_vert) > 0.00001f)
-        {
-            dest_points[num_out_verts++] = vert;
-            last_vert = vert;
-        }
+        if (ImLengthSqr(vert - last_vert) <= 0.00001f)
+            continue;
+        dest_points[num_out_verts++] = vert;
+        last_vert = vert;
     }
 
     // Return size (IF this is still a valid shape)
@@ -1867,6 +1864,7 @@ void ImDrawList::AddShadowRect(const ImVec2& obj_min, const ImVec2& obj_max, ImU
         PrimReserve(6 * 9, 4 * 9); // Reserve space for adding unclipped chunks
 
     // Draw the relevant chunks of the texture (the texture is split into a 3x3 grid)
+    // FIXME-OPT: Might make sense to optimize/unroll for the fast paths (filled or not rounded)
     for (int x = 0; x < 3; x++)
     {
         for (int y = 0; y < 3; y++)
@@ -1908,7 +1906,7 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
     IM_ASSERT(points_count >= 3);
 
     // Calculate poly vertex order
-    int vertex_winding = (((points[0].x * (points[1].y - points[2].y)) + (points[1].x * (points[2].y - points[0].y)) + (points[2].x * (points[0].y - points[1].y))) < 0.0f) ? -1 : 1;
+    const int vertex_winding = (((points[0].x * (points[1].y - points[2].y)) + (points[1].x * (points[2].y - points[0].y)) + (points[2].x * (points[0].y - points[1].y))) < 0.0f) ? -1 : 1;
 
     // If we're using anti-aliasing, then inset the shadow by 0.5 pixels to avoid unpleasant fringing artifacts
     const bool use_inset_distance = (Flags & ImDrawListFlags_AntiAliasedFill) && (!is_filled);
@@ -1948,7 +1946,6 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
         ImVec2 edge_start = points[edge_index]; // No need to apply offset here because the normal is unaffected
         ImVec2 edge_end = points[(edge_index + 1) % num_edges];
         ImVec2 edge_normal = NORMALIZE(ImVec2(edge_end.y - edge_start.y, -(edge_end.x - edge_start.x)));
-
         edge_normals[edge_index] = edge_normal * (float)vertex_winding; // Flip normals for reverse winding
     }
 
@@ -1960,7 +1957,6 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
 
     {
         ImVec2 prev_edge_normal = edge_normals[num_edges - 1];
-
         for (int edge_index = 0; edge_index < num_edges; edge_index++)
         {
             ImVec2 edge_normal = edge_normals[edge_index];
@@ -1968,12 +1964,10 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
 
             if (cos_angle_coverage < 0.999999f)
             {
-                float angle_coverage = ImAcos(cos_angle_coverage);
-
                 // If we are covering more than 90 degrees we need an intermediate vertex to stop the required expansion tending towards infinity, and thus the effective angle will be halved
+                float angle_coverage = ImAcos(cos_angle_coverage);
                 if (cos_angle_coverage <= 0.0f)
                     angle_coverage *= 0.5f;
-
                 edge_size_scales[edge_index] = 1.0f / ImCos(angle_coverage * 0.5f); // How much we need to expand our size by to avoid clipping the corner of the texture off
             }
             else
@@ -2035,7 +2029,6 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
                 const float sin_angle_coverage = ImSin(angle_coverage);
 
                 ImVec2 edge_delta = solid_to_edge_delta_texels;
-
                 edge_delta *= size_scale_start;
 
                 ImVec2 rotated_edge_delta = ImVec2((edge_delta.x * cos_angle_coverage) + (edge_delta.y * sin_angle_coverage), (edge_delta.x * sin_angle_coverage) + (edge_delta.y * cos_angle_coverage));
@@ -2056,7 +2049,7 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
                 ImVec2 outer_edge_end = edge_start + (edge_normal * expanded_thickness);
 
                 vtx_write->pos = edge_start; vtx_write->col = shadow_col; vtx_write->uv = solid_uv; vtx_write++;
-                vtx_write->pos = outer_edge_end; vtx_write->col = shadow_col; vtx_write->uv = expanded_edge_uv; vtx_write++;
+                vtx_write->pos = outer_edge_end;   vtx_write->col = shadow_col; vtx_write->uv = expanded_edge_uv; vtx_write++;
                 vtx_write->pos = outer_edge_start; vtx_write->col = shadow_col; vtx_write->uv = other_edge_uv; vtx_write++;
 
                 *(idx_write++) = current_idx;
@@ -2070,12 +2063,10 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
 
         // Add section along edge
         const float edge_length = ImLength(edge_end - edge_start, 0.0f);
-
         if (edge_length > 0.00001f) // Don't try and process degenerate edges
         {
             ImVec2 outer_edge_start = edge_start + (edge_normal * shadow_thickness * size_scale_start);
             ImVec2 outer_edge_end = edge_end + (edge_normal * shadow_thickness * size_scale_end);
-
             ImVec2 scaled_edge_uv_start = solid_uv + ((edge_uv - solid_uv) * size_scale_start);
             ImVec2 scaled_edge_uv_end = solid_uv + ((edge_uv - solid_uv) * size_scale_end);
 
@@ -2097,7 +2088,8 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
         edge_start = edge_end;
     }
 
-    if (is_filled) // Fill if requested
+    // Fill if requested
+    if (is_filled)
     {
         // Add vertices
         for (int edge_index = 0; edge_index < num_edges; edge_index++)
@@ -3217,26 +3209,22 @@ static void ImFontAtlasBuildRegisterShadowCustomRects(ImFontAtlas* atlas)
     atlas->ShadowRectIds[1] = atlas->AddCustomRectRegular(shadow_cfg->CalcConvexTexWidth() + shadow_cfg->GetConvexTexPadding(), shadow_cfg->CalcConvexTexHeight() + shadow_cfg->GetConvexTexPadding());
 }
 
-// Calculates the signed distance from samplePos to the nearest point on the rectangle defined by rectMin-rectMax
-static float DistanceFromRectangle(ImVec2 samplePos, ImVec2 rectMin, ImVec2 rectMax)
+// Calculates the signed distance from sample_pos to the nearest point on the rectangle defined by rect_min->rect_max
+static float DistanceFromRectangle(const ImVec2& sample_pos, const ImVec2& rect_min, const ImVec2& rect_max)
 {
-    ImVec2 rect_centre = (rectMin + rectMax) * 0.5f;
-    ImVec2 rect_half_size = (rectMax - rectMin) * 0.5f;
-
-    ImVec2 local_sample_pos = samplePos - rect_centre;
-
+    ImVec2 rect_centre = (rect_min + rect_max) * 0.5f;
+    ImVec2 rect_half_size = (rect_max - rect_min) * 0.5f;
+    ImVec2 local_sample_pos = sample_pos - rect_centre;
     ImVec2 axis_dist = ImVec2(ImFabs(local_sample_pos.x), ImFabs(local_sample_pos.y)) - rect_half_size;
-
     float out_dist = ImLength(ImVec2(ImMax(axis_dist.x, 0.0f), ImMax(axis_dist.y, 0.0f)), 0.00001f);
     float in_dist = ImMin(ImMax(axis_dist.x, axis_dist.y), 0.0f);
-
     return out_dist + in_dist;
 }
 
-// Calculates the signed distance from samplePos to the point given
-static float DistanceFromPoint(ImVec2 samplePos, ImVec2 point)
+// Calculates the signed distance from sample_pos to the point given
+static float DistanceFromPoint(const ImVec2& sample_pos, const ImVec2& point)
 {
-    return ImLength(samplePos - point, 0.0f);
+    return ImLength(sample_pos - point, 0.0f);
 }
 
 // Perform a single Gaussian blur pass with a fixed kernel size and sigma
@@ -3245,21 +3233,19 @@ static void GaussianBlurPass(float* src, float* dest, int size, bool horizontal)
     // See http://dev.theomader.com/gaussian-kernel-calculator/
     const float coefficients[] = { 0.0f, 0.0f, 0.000003f, 0.000229f, 0.005977f, 0.060598f, 0.24173f, 0.382925f, 0.24173f, 0.060598f, 0.005977f, 0.000229f, 0.000003f, 0.0f, 0.0f };
     const int kernel_size = IM_ARRAYSIZE(coefficients);
-
-    int sample_step = horizontal ? 1 : size;
+    const int sample_step = horizontal ? 1 : size;
 
     float* read_ptr = src;
     float* write_ptr = dest;
-
     for (int y = 0; y < size; y++)
         for (int x = 0; x < size; x++)
         {
-            float result = 0;
+            float result = 0.0f;
             int current_offset = (horizontal ? x : y) - ((kernel_size - 1) >> 1);
             float* sample_ptr = read_ptr - (((kernel_size - 1) >> 1) * sample_step);
             for (int j = 0; j < kernel_size; j++)
             {
-                if ((current_offset >= 0) && (current_offset < size))
+                if (current_offset >= 0 && current_offset < size)
                     result += (*sample_ptr) * coefficients[j];
                 current_offset++;
                 sample_ptr += sample_step;
@@ -3283,8 +3269,7 @@ static void GaussianBlur(float* data, int size)
 static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
 {
     IM_ASSERT(atlas->TexPixelsAlpha8 != NULL);
-    IM_ASSERT(atlas->ShadowRectIds[0] >= 0);
-    IM_ASSERT(atlas->ShadowRectIds[1] >= 0);
+    IM_ASSERT(atlas->ShadowRectIds[0] >= 0 && atlas->ShadowRectIds[1] >= 0);
 
     // Because of the blur, we have to generate the full 3x3 texture here, and then we chop that down to just the 2x2 section we need later.
     // 'size' correspond to the our 3x3 size, whereas 'shadow_tex_size' correspond to our 2x2 version where duplicate mirrored corners are not stored.
@@ -3300,18 +3285,16 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
         const ImVec2 shadow_rect_min((float)corner_size, (float)corner_size);
         const ImVec2 shadow_rect_max((float)(corner_size + edge_size), (float)(corner_size + edge_size));
 
-        // Render the texture
-        ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectIds[0]];
-
         // Remove the padding we added
+        ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectIds[0]];
         const int padding = shadow_cfg->GetRectTexPadding();
         r.X += (unsigned short)padding;
         r.Y += (unsigned short)padding;
         r.Width -= (unsigned short)padding * 2;
         r.Height -= (unsigned short)padding * 2;
 
-        // We draw the actual texture content by evaluating the distance field for the inner rectangle
         // Generate distance field
+        // We draw the actual texture content by evaluating the distance field for the inner rectangle
         float* tex_data = (float*)alloca(size * size * sizeof(float));
         for (int y = 0; y < size; y++)
             for (int x = 0; x < size; x++)
@@ -3340,23 +3323,22 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
         // Generate UVs for each of the nine sections, which are arranged in a 3x3 grid starting from 0 in the top-left and going across then down
         for (int i = 0; i < 9; i++)
         {
-            ImFontAtlasCustomRect sub_rect = r;
-
             // The third row/column of the 3x3 grid are generated by flipping the appropriate chunks of the upper 2x2 grid.
             bool flip_h = false; // Do we need to flip the UVs horizontally?
             bool flip_v = false; // Do we need to flip the UVs vertically?
 
+            ImFontAtlasCustomRect sub_rect = r;
             switch (i % 3)
             {
             case 0: sub_rect.Width = (unsigned short)corner_size; break;
-            case 1: sub_rect.X += (unsigned short)corner_size; sub_rect.Width = (unsigned short)edge_size; break;
+            case 1: sub_rect.X    += (unsigned short)corner_size; sub_rect.Width = (unsigned short)edge_size; break;
             case 2: sub_rect.Width = (unsigned short)corner_size; flip_h = true; break;
             }
 
             switch (i / 3)
             {
             case 0: sub_rect.Height = (unsigned short)corner_size; break;
-            case 1: sub_rect.Y += (unsigned short)corner_size; sub_rect.Height = (unsigned short)edge_size; break;
+            case 1: sub_rect.Y     += (unsigned short)corner_size; sub_rect.Height = (unsigned short)edge_size; break;
             case 2: sub_rect.Height = (unsigned short)corner_size; flip_v = true; break;
             }
 
@@ -3371,14 +3353,10 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
         const int size = shadow_cfg->TexCornerSize * 2;
         const int padding = shadow_cfg->GetConvexTexPadding();
 
-        // Render the texture
-        ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectIds[1]];
-
-        // We draw the actual texture content by evaluating the distance field for the distance from a center point
         // Generate distance field
-
+        // We draw the actual texture content by evaluating the distance field for the distance from a center point
+        ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectIds[1]];
         ImVec2 center_point(size * 0.5f, size * 0.5f);
-
         float* tex_data = (float*)alloca(size * size * sizeof(float));
         for (int y = 0; y < size; y++)
             for (int x = 0; x < size; x++)
@@ -3405,10 +3383,9 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
         for (int y = 0; y < tex_height; y++)
             for (int x = 0; x < tex_width; x++)
             {
-                int srcX = ImClamp(x - src_x_offset, 0, size - 1);
-                int srcY = ImClamp(y - src_y_offset, 0, size - 1);
-
-                const float alpha = tex_data[srcX + (srcY * size)];
+                const int src_x = ImClamp(x - src_x_offset, 0, size - 1);
+                const int src_y = ImClamp(y - src_y_offset, 0, size - 1);
+                const float alpha = tex_data[src_x + (src_y * size)];
                 const unsigned int offset = (int)(r.X + x) + (int)(r.Y + y) * tex_w;
                 atlas->TexPixelsAlpha8[offset] = (unsigned char)(0xFF * alpha);
             }
