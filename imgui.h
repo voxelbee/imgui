@@ -2391,11 +2391,12 @@ struct ImDrawList
     //      Typically used by: small, frequent objects, opaque objects, transparent objects if shadow darkening isn't an issue.
     //    - Shadows w/ hole under the object: a bit slower for CPU, less pixels rendered, no difference if used behind a transparent shape.
     //      Typically used by: large, infrequent objects, transparent objects if exact blending/color matter.
-    // - FIXME-SHADOWS: 'offset' + ImDrawShadowFlags_CutOutBackground are not currently supported together with AddShadowCircle(), AddShadowConvexPoly().
+    // - FIXME-SHADOWS: 'offset' + ImDrawShadowFlags_CutOutBackground are not currently supported together with AddShadowCircle(), AddShadowConvexPoly(), AddShadowNGon().
     #define IMGUI_HAS_SHADOWS 1
     IMGUI_API void  AddShadowRect(const ImVec2& obj_min, const ImVec2& obj_max, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags = 0, float obj_rounding = 0.0f, ImDrawCornerFlags obj_rounding_corners = ImDrawCornerFlags_All);
     IMGUI_API void  AddShadowCircle(const ImVec2& obj_center, float obj_radius, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags = 0, int obj_num_segments = 12);
     IMGUI_API void  AddShadowConvexPoly(const ImVec2* points, int points_count, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags = 0);
+    IMGUI_API void  AddShadowNGon(const ImVec2& obj_center, float obj_radius, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags, int obj_num_segments);
 
     // Stateful path API, add points then finish with PathFillConvex() or PathStroke()
     inline    void  PathClear()                                                 { _Path.Size = 0; }

@@ -2162,6 +2162,12 @@ void ImDrawList::AddShadowCircle(const ImVec2& obj_center, float obj_radius, ImU
     _Path.Size = 0;
 }
 
+void ImDrawList::AddShadowNGon(const ImVec2& obj_center, float obj_radius, ImU32 shadow_col, float shadow_thickness, const ImVec2& shadow_offset, ImDrawShadowFlags shadow_flags, int num_segments)
+{
+    IM_ASSERT(num_segments != 0);
+    AddShadowCircle(obj_center, obj_radius, shadow_col, shadow_thickness, shadow_offset, shadow_flags, num_segments);
+}
+
 //-----------------------------------------------------------------------------
 // [SECTION] ImDrawListSplitter
 //-----------------------------------------------------------------------------
