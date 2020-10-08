@@ -7160,92 +7160,72 @@ static void ShowExampleAppCustomRendering(bool* p_open)
                 ImGui::Dummy(ImVec2(200.0f, 200.0f));
 
                 const ImVec2 poly_centre(pos.x + 50.0f, pos.y + 100.0f);
-                ImVec2* poly_points;
-                int num_poly_points;
+                ImVec2 poly_points[8];
+                int poly_points_count = 0;
 
                 switch (poly_shape_index)
                 {
                 default:
                 case 0:
                 {
-                    ImVec2 poly_point_data[] =
-                    {
-                        ImVec2(poly_centre.x - 32.0f, poly_centre.y),
-                        ImVec2(poly_centre.x - 24.0f, poly_centre.y + 24.0f),
-                        ImVec2(poly_centre.x, poly_centre.y + 32.0f),
-                        ImVec2(poly_centre.x + 24.0f, poly_centre.y + 24.0f),
-                        ImVec2(poly_centre.x + 32.0f, poly_centre.y),
-                        ImVec2(poly_centre.x + 24.0f, poly_centre.y - 24.0f),
-                        ImVec2(poly_centre.x, poly_centre.y - 32.0f),
-                        ImVec2(poly_centre.x - 32.0f, poly_centre.y - 32.0f)
-                    };
-                    poly_points = poly_point_data;
-                    num_poly_points = 8;
+                    poly_points[0] = ImVec2(poly_centre.x - 32.0f, poly_centre.y);
+                    poly_points[1] = ImVec2(poly_centre.x - 24.0f, poly_centre.y + 24.0f);
+                    poly_points[2] = ImVec2(poly_centre.x, poly_centre.y + 32.0f);
+                    poly_points[3] = ImVec2(poly_centre.x + 24.0f, poly_centre.y + 24.0f);
+                    poly_points[4] = ImVec2(poly_centre.x + 32.0f, poly_centre.y);
+                    poly_points[5] = ImVec2(poly_centre.x + 24.0f, poly_centre.y - 24.0f);
+                    poly_points[6] = ImVec2(poly_centre.x, poly_centre.y - 32.0f);
+                    poly_points[7] = ImVec2(poly_centre.x - 32.0f, poly_centre.y - 32.0f);
+                    poly_points_count = 8;
                     break;
                 }
                 case 1:
                 {
-                    ImVec2 poly_point_data[] =
-                    {
-                        ImVec2(poly_centre.x + 40.0f, poly_centre.y - 20.0f),
-                        ImVec2(poly_centre.x, poly_centre.y + 32.0f),
-                        ImVec2(poly_centre.x - 24.0f, poly_centre.y - 32.0f)
-                    };
-                    poly_points = poly_point_data;
-                    num_poly_points = 3;
+                    poly_points[0] = ImVec2(poly_centre.x + 40.0f, poly_centre.y - 20.0f);
+                    poly_points[1] = ImVec2(poly_centre.x, poly_centre.y + 32.0f);
+                    poly_points[2] = ImVec2(poly_centre.x - 24.0f, poly_centre.y - 32.0f);
+                    poly_points_count = 3;
                     break;
                 }
                 case 2:
                 {
-                    ImVec2 poly_point_data[] =
-                    {
-                        ImVec2(poly_centre.x - 32.0f, poly_centre.y),
-                        ImVec2(poly_centre.x, poly_centre.y + 32.0f),
-                        ImVec2(poly_centre.x + 32.0f, poly_centre.y),
-                        ImVec2(poly_centre.x, poly_centre.y - 32.0f)
-                    };
-                    poly_points = poly_point_data;
-                    num_poly_points = 4;
+                    poly_points[0] = ImVec2(poly_centre.x - 32.0f, poly_centre.y);
+                    poly_points[1] = ImVec2(poly_centre.x, poly_centre.y + 32.0f);
+                    poly_points[2] = ImVec2(poly_centre.x + 32.0f, poly_centre.y);
+                    poly_points[3] = ImVec2(poly_centre.x, poly_centre.y - 32.0f);
+                    poly_points_count = 4;
                     break;
                 }
                 case 3:
                 {
-                    ImVec2 poly_point_data[] =
-                    {
-                        ImVec2(poly_centre.x - 4.0f, poly_centre.y - 20.0f),
-                        ImVec2(poly_centre.x + 12.0f, poly_centre.y + 2.0f),
-                        ImVec2(poly_centre.x + 8.0f, poly_centre.y + 16.0f),
-                        ImVec2(poly_centre.x, poly_centre.y + 32.0f),
-                        ImVec2(poly_centre.x - 16.0f, poly_centre.y - 32.0f)
-                    };
-                    poly_points = poly_point_data;
-                    num_poly_points = 5;
+                    poly_points[0] = ImVec2(poly_centre.x - 4.0f, poly_centre.y - 20.0f);
+                    poly_points[1] = ImVec2(poly_centre.x + 12.0f, poly_centre.y + 2.0f);
+                    poly_points[2] = ImVec2(poly_centre.x + 8.0f, poly_centre.y + 16.0f);
+                    poly_points[3] = ImVec2(poly_centre.x, poly_centre.y + 32.0f);
+                    poly_points[4] = ImVec2(poly_centre.x - 16.0f, poly_centre.y - 32.0f);
+                    poly_points_count = 5;
                     break;
                 }
                 case 4: // Same as test case 3 but with reversed winding
                 {
-                    ImVec2 poly_point_data[] =
-                    {
-                        ImVec2(poly_centre.x - 16.0f, poly_centre.y - 32.0f),
-                        ImVec2(poly_centre.x, poly_centre.y + 32.0f),
-                        ImVec2(poly_centre.x + 8.0f, poly_centre.y + 16.0f),
-                        ImVec2(poly_centre.x + 12.0f, poly_centre.y + 2.0f),
-                        ImVec2(poly_centre.x - 4.0f, poly_centre.y - 20.0f)
-                    };
-                    poly_points = poly_point_data;
-                    num_poly_points = 5;
+                    poly_points[0] = ImVec2(poly_centre.x - 16.0f, poly_centre.y - 32.0f);
+                    poly_points[1] = ImVec2(poly_centre.x, poly_centre.y + 32.0f);
+                    poly_points[2] = ImVec2(poly_centre.x + 8.0f, poly_centre.y + 16.0f);
+                    poly_points[3] = ImVec2(poly_centre.x + 12.0f, poly_centre.y + 2.0f);
+                    poly_points[4] = ImVec2(poly_centre.x - 4.0f, poly_centre.y - 20.0f);
+                    poly_points_count = 5;
                     break;
                 }
                 }
 
                 // FIXME-SHADOWS: Offset forced to zero when shadow is not filled because it isn't supported
                 ImDrawShadowFlags shadow_flags = shadow_filled ? ImDrawShadowFlags_None : ImDrawShadowFlags_CutOutShapeBackground;
-                draw_list->AddShadowConvexPoly(poly_points, num_poly_points, ImGui::GetColorU32(shadow_color), shadow_thickness, shadow_filled ? shadow_offset : ImVec2(0.0f, 0.0f), shadow_flags);
+                draw_list->AddShadowConvexPoly(poly_points, poly_points_count, ImGui::GetColorU32(shadow_color), shadow_thickness, shadow_filled ? shadow_offset : ImVec2(0.0f, 0.0f), shadow_flags);
 
                 if (wireframe)
-                    draw_list->AddPolyline(poly_points, num_poly_points, ImGui::GetColorU32(shape_color), true, 1.0f);
+                    draw_list->AddPolyline(poly_points, poly_points_count, ImGui::GetColorU32(shape_color), true, 1.0f);
                 else
-                    draw_list->AddConvexPolyFilled(poly_points, num_poly_points, ImGui::GetColorU32(shape_color));
+                    draw_list->AddConvexPolyFilled(poly_points, poly_points_count, ImGui::GetColorU32(shape_color));
             }
 
             draw_list->Flags = old_flags;

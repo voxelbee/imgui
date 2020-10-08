@@ -400,8 +400,7 @@ int ImGuiStyleShadowTexConfig::CalcConvexTexWidth() const
 
 int ImGuiStyleShadowTexConfig::CalcConvexTexHeight() const
 {
-    // We have to pad the texture enough that we don't go off the edges when we expand the corner triangles
-    return (int)((TexCornerSize / ImCos(IM_PI * 0.25f)) + (GetConvexTexPadding() * 2));
+    return CalcConvexTexWidth(); // Same value
 }
 
 
@@ -1983,9 +1982,10 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
 
             if (cos_angle_coverage < 0.999999f)
             {
-                // If we are covering more than 90 degrees we need an intermediate vertex to stop the required expansion tending towards infinity, and thus the effective angle will be halved
+                // If we are covering more than 90 degrees we need an intermediate vertex to stop the required expansion tending towards infinity.
+                // And thus the effective angle will be halved (matches the similar code in loop below)
                 float angle_coverage = ImAcos(cos_angle_coverage);
-                if (cos_angle_coverage <= 0.0f)
+                if (cos_angle_coverage <= 0.0f) // -V1051
                     angle_coverage *= 0.5f;
                 edge_size_scales[edge_index] = 1.0f / ImCos(angle_coverage * 0.5f); // How much we need to expand our size by to avoid clipping the corner of the texture off
             }
@@ -2024,10 +2024,10 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
 
         // Add corner section
         float cos_angle_coverage = ImDot(edge_normal, prev_edge_normal);
-
         if (cos_angle_coverage < 0.999999f) // Don't fill if the corner is actually straight
         {
-            // If we are covering more than 90 degrees we need an intermediate vertex to stop the required expansion tending towards infinity
+            // If we are covering more than 90 degrees we need an intermediate vertex to stop the required expansion tending towards infinity.
+            // And thus the effective angle has been halved (matches the similar code in loop above)
             int num_steps = (cos_angle_coverage <= 0.0f) ? 2 : 1;
 
             for (int step = 0; step < num_steps; step++)
