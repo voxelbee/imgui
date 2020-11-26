@@ -144,7 +144,7 @@ static ImVec2           InputTextCalcTextSizeW(const ImWchar* text_begin, const 
 void ImGui::TextEx(ImStr text, ImGuiTextFlags flags)
 {
     ImGuiWindow* window = GetCurrentWindow();
-    if (window->SkipItems || text.Empty())
+    if (window->SkipItems)
         return;
 
     ImGuiContext& g = *GImGui;
@@ -152,7 +152,7 @@ void ImGui::TextEx(ImStr text, ImGuiTextFlags flags)
     const ImVec2 text_pos(window->DC.CursorPos.x, window->DC.CursorPos.y + window->DC.CurrLineTextBaseOffset);
     const float wrap_pos_x = window->DC.TextWrapPos;
     const bool wrap_enabled = (wrap_pos_x >= 0.0f);
-    if (IM_IMSTR_LENGTH(text) > 2000 && !wrap_enabled)
+    if (text.End - text.Begin > 2000 && !wrap_enabled)
     {
         // Long text!
         // Perform manual coarse clipping to optimize for long multi-line text
@@ -1555,7 +1555,7 @@ bool ImGui::BeginCombo(ImStr label, ImStr preview_value, ImGuiComboFlags flags)
             RenderArrow(window->DrawList, ImVec2(value_x2 + style.FramePadding.y, frame_bb.Min.y + style.FramePadding.y), text_col, ImGuiDir_Down, 1.0f);
     }
     RenderFrameBorder(frame_bb.Min, frame_bb.Max, style.FrameRounding);
-    if (!preview_value.Empty() && !(flags & ImGuiComboFlags_NoPreview))
+    if (!preview_value.empty() && !(flags & ImGuiComboFlags_NoPreview))
         RenderTextClipped(frame_bb.Min + style.FramePadding, ImVec2(value_x2, frame_bb.Max.y), preview_value, NULL, ImVec2(0.0f, 0.0f));
     if (label_size.x > 0)
         RenderText(ImVec2(frame_bb.Max.x + style.ItemInnerSpacing.x, frame_bb.Min.y + style.FramePadding.y), label);
@@ -2247,13 +2247,13 @@ bool ImGui::DragScalar(ImStr label, ImGuiDataType data_type, void* p_data, float
 
     char format_0[64];  // format may not end with \0
     const char* format = format_0;
-    IM_ASSERT(IM_IMSTR_LENGTH(format_p) < IM_ARRAYSIZE(format_0));
+    IM_ASSERT(format_p.End - format_p.Begin < IM_ARRAYSIZE(format_0));
     ImStrncpy(format_0, format_p, IM_ARRAYSIZE(format_0));
 
     // Default format string when passing NULL
-    if (format_p.Empty())
+    if (!format_p)
         format = DataTypeGetInfo(data_type)->PrintFmt;
-    else if (data_type == ImGuiDataType_S32 && format_p != ImStr("%d")) // (FIXME-LEGACY: Patch old "%.0f" format string to use "%d", read function more details.)
+    else if (data_type == ImGuiDataType_S32 && ImStrcmp(format_p, "%d") != 0) // (FIXME-LEGACY: Patch old "%.0f" format string to use "%d", read function more details.)
         format = PatchFormatStringFloatToInt(format);
 
     // Tabbing or CTRL-clicking on Drag turns it into an input box
@@ -2860,15 +2860,15 @@ bool ImGui::SliderScalar(ImStr label, ImGuiDataType data_type, void* p_data, con
 
     char format_0[64];  // format may not end with \0
     const char* format = format_0;
-    IM_ASSERT(IM_IMSTR_LENGTH(format_p) < IM_ARRAYSIZE(format_0));
+    IM_ASSERT(format_p.End - format_p.Begin < IM_ARRAYSIZE(format_0));
 
     // Default format string when passing NULL
-    if (format_p.Empty())
+    if (!format_p)
         format = DataTypeGetInfo(data_type)->PrintFmt;
     else
     {
         ImStrncpy(format_0, format_p, IM_ARRAYSIZE(format_0));
-        if (data_type == ImGuiDataType_S32 && format_p != ImStr("%d")) // (FIXME-LEGACY: Patch old "%.0f" format string to use "%d", read function more details.)
+        if (data_type == ImGuiDataType_S32 && ImStrcmp(format_p, "%d") != 0) // (FIXME-LEGACY: Patch old "%.0f" format string to use "%d", read function more details.)
             format = PatchFormatStringFloatToInt(format);
     }
 
@@ -2986,7 +2986,7 @@ bool ImGui::SliderFloat4(ImStr label, float v[4], float v_min, float v_max, ImSt
 
 bool ImGui::SliderAngle(ImStr label, float* v_rad, float v_degrees_min, float v_degrees_max, ImStr format, ImGuiSliderFlags flags)
 {
-    if (format.Empty())
+    if (!format)
         format = "%.0f deg";
     float v_deg = (*v_rad) * 360.0f / (2 * IM_PI);
     bool value_changed = SliderFloat(label, &v_deg, v_degrees_min, v_degrees_max, format, flags);
@@ -3034,15 +3034,15 @@ bool ImGui::VSliderScalar(ImStr label, const ImVec2& size, ImGuiDataType data_ty
 
     char format_0[64];  // format may not end with \0
     const char* format = format_0;
-    IM_ASSERT(IM_IMSTR_LENGTH(format_p) < IM_ARRAYSIZE(format_0));
+    IM_ASSERT(format_p.End - format_p.Begin < IM_ARRAYSIZE(format_0));
 
     // Default format string when passing NULL
-    if (format_p.Empty())
+    if (!format_p)
         format = DataTypeGetInfo(data_type)->PrintFmt;
     else
     {
         ImStrncpy(format_0, format_p, IM_ARRAYSIZE(format_0));
-        if (data_type == ImGuiDataType_S32 && format_p != ImStr("%d")) // (FIXME-LEGACY: Patch old "%.0f" format string to use "%d", read function more details.)
+        if (data_type == ImGuiDataType_S32 && ImStrcmp(format_p, "%d") != 0) // (FIXME-LEGACY: Patch old "%.0f" format string to use "%d", read function more details.)
             format = PatchFormatStringFloatToInt(format);
     }
 
@@ -3286,10 +3286,10 @@ bool ImGui::InputScalar(ImStr label, ImGuiDataType data_type, void* p_data, cons
 
     char format_0[64];  // format may not end with \0
     const char* format = format_0;
-    IM_ASSERT(IM_IMSTR_LENGTH(format_p) < IM_ARRAYSIZE(format_0));
+    IM_ASSERT(format_p.End - format_p.Begin < IM_ARRAYSIZE(format_0));
     ImStrncpy(format_0, format_p, IM_ARRAYSIZE(format_0));
 
-    if (format_p.Empty())
+    if (!format_p)
         format = DataTypeGetInfo(data_type)->PrintFmt;
 
     char buf[64];
@@ -3680,7 +3680,7 @@ void ImGuiInputTextCallbackData::DeleteChars(int pos, int bytes_count)
 void ImGuiInputTextCallbackData::InsertChars(int pos, ImStr new_text)
 {
     const bool is_resizable = (Flags & ImGuiInputTextFlags_CallbackResize) != 0;
-    const int new_text_len = (int)IM_IMSTR_LENGTH(new_text);
+    const int new_text_len = (int)new_text.length();
     if (new_text_len + BufTextLen >= BufSize)
     {
         if (!is_resizable)
@@ -3983,7 +3983,7 @@ bool ImGui::InputTextEx(ImStr label, ImStr hint, char* buf, int buf_size, const 
 
     // Select the buffer to render.
     const bool buf_display_from_state = (render_cursor || render_selection || g.ActiveId == id) && !is_readonly && state && state->TextAIsValid;
-    const bool is_displaying_hint = (!hint.Empty() && (buf_display_from_state ? state->TextA.Data : buf)[0] == 0);
+    const bool is_displaying_hint = (!hint.empty() && (buf_display_from_state ? state->TextA.Data : buf)[0] == 0);
 
     // Password pushes a temporary font with only a fallback glyph
     if (is_password && !is_displaying_hint)
@@ -4181,7 +4181,7 @@ bool ImGui::InputTextEx(ImStr label, ImStr hint, char* buf, int buf_size, const 
             if (ImStr clipboard = GetClipboardText())
             {
                 // Filter pasted buffer
-                const int clipboard_len = (int)IM_IMSTR_LENGTH(clipboard);
+                const int clipboard_len = (int)clipboard.length();
                 ImWchar* clipboard_filtered = (ImWchar*)IM_ALLOC((clipboard_len + 1) * sizeof(ImWchar));
                 int clipboard_filtered_len = 0;
                 for (const char* s = clipboard.Begin; *s; )
@@ -6399,17 +6399,17 @@ void ImGui::PlotHistogram(ImStr label, float (*values_getter)(void* data, int id
 
 void ImGui::Value(ImStr prefix, bool b)
 {
-    Text("%.*s: %s", (int)IM_IMSTR_LENGTH(prefix), prefix.Begin, (b ? "true" : "false"));
+    Text("%.*s: %s", (int)prefix.length(), prefix.Begin, (b ? "true" : "false"));
 }
 
 void ImGui::Value(ImStr prefix, int v)
 {
-    Text("%.*s: %d", (int)IM_IMSTR_LENGTH(prefix), prefix.Begin, v);
+    Text("%.*s: %d", (int)prefix.length(), prefix.Begin, v);
 }
 
 void ImGui::Value(ImStr prefix, unsigned int v)
 {
-    Text("%.*s: %d", (int)IM_IMSTR_LENGTH(prefix), prefix.Begin, v);
+    Text("%.*s: %d", (int)prefix.length(), prefix.Begin, v);
 }
 
 void ImGui::Value(ImStr prefix, float v, ImStr float_format)
@@ -6417,12 +6417,12 @@ void ImGui::Value(ImStr prefix, float v, ImStr float_format)
     if (float_format)
     {
         char fmt[64];
-        ImFormatString(fmt, IM_ARRAYSIZE(fmt), "%%.*s: %.*s", (int)IM_IMSTR_LENGTH(float_format), float_format.Begin);
-        Text(fmt, (int)IM_IMSTR_LENGTH(prefix), prefix.Begin, v);
+        ImFormatString(fmt, IM_ARRAYSIZE(fmt), "%%.*s: %.*s", (int)float_format.length(), float_format.Begin);
+        Text(fmt, (int)prefix.length(), prefix.Begin, v);
     }
     else
     {
-        Text("%.*s: %.3f", (int)IM_IMSTR_LENGTH(prefix), prefix.Begin, v);
+        Text("%.*s: %.3f", (int)prefix.length(), prefix.Begin, v);
     }
 }
 

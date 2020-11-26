@@ -1439,11 +1439,11 @@ void ImGui::TableSetupColumn(ImStr label, ImGuiTableColumnFlags flags, float ini
 
     // Store name (append with zero-terminator in contiguous buffer)
     IM_ASSERT(column->NameOffset == -1);
-    if (label != NULL && label[0] != 0)
+    if (!label.empty())
     {
         char zero_terminator = 0;
         column->NameOffset = (ImS16)table->ColumnsNames.size();
-        table->ColumnsNames.append(label.Begin, label.Begin + IM_IMSTR_LENGTH(label));
+        table->ColumnsNames.append(label.Begin, label.End);
         table->ColumnsNames.append(&zero_terminator, &zero_terminator + 1);
     }
 }
