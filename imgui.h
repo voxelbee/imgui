@@ -243,7 +243,8 @@ struct ImVec4
 #endif
 };
 
-// String view class.
+// String view (non-owning pair of begin/end pointers, not necessarily zero-terminated)
+// ImStr are used as function parameters instead of passing a pair of const char*.
 #define IMGUI_HAS_IMSTR 1
 struct ImStr
 {
@@ -254,9 +255,9 @@ struct ImStr
     ImStr(const char* b, const char* e) { Begin = b; End = e ? e : b + strlen(b); }
     inline size_t length() const        { return (size_t)(End - Begin); }
     inline bool empty() const           { return Begin == End; }    // == "" or == NULL
-    inline operator bool() const        { return Begin != NULL; }   // != NULL
-#ifdef IM_IMSTR_CLASS_EXTRA
-    IM_IMSTR_CLASS_EXTRA     // Define additional constructors and implicit cast operators in imconfig.h to convert back and forth between your string types and ImStr.
+    inline operator bool() const        { return Begin != NULL; }   // return true when valid ("" is valid, NULL construction is not)
+#ifdef IM_STR_CLASS_EXTRA
+    IM_STR_CLASS_EXTRA     // Define additional constructor in imconfig.h to convert your string types (e.g. std::string, std::string_view) to ImStr.
 #endif
     // private: bool operator==(ImStr) { return false; } // [DEBUG] Uncomment to catch undesirable uses of operators
     // private: bool operator!=(ImStr) { return false; }

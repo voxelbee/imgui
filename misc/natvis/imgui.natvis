@@ -42,6 +42,11 @@
   </Expand>
 </Type>
 
+<!-- String view (non zero-terminated begin/end pair) -->
+<Type Name="ImStr">
+  <DisplayString>{Begin,[End-Begin]s} ({End-Begin,d})</DisplayString>
+</Type>
+
 <Type Name="ImGuiWindow">
   <DisplayString>{{Name {Name,s} Active {(Active||WasActive)?1:0,d} Child {(Flags &amp; 0x01000000)?1:0,d} Popup {(Flags &amp; 0x04000000)?1:0,d} Hidden {(Hidden)?1:0,d}}</DisplayString>
 </Type>
