@@ -114,6 +114,25 @@ Index of this file:
 // Forward declarations and basic types
 //-----------------------------------------------------------------------------
 
+// Basic scalar data types
+typedef signed char         ImS8;   // 8-bit signed integer
+typedef unsigned char       ImU8;   // 8-bit unsigned integer
+typedef signed short        ImS16;  // 16-bit signed integer
+typedef unsigned short      ImU16;  // 16-bit unsigned integer
+typedef signed int          ImS32;  // 32-bit signed integer == int
+typedef unsigned int        ImU32;  // 32-bit unsigned integer (often used to store packed colors)
+#if defined(_MSC_VER) && !defined(__clang__)
+typedef signed   __int64    ImS64;  // 64-bit signed integer (pre and post C++11 with Visual Studio)
+typedef unsigned __int64    ImU64;  // 64-bit unsigned integer (pre and post C++11 with Visual Studio)
+#elif (defined(__clang__) || defined(__GNUC__)) && (__cplusplus < 201100)
+#include <stdint.h>
+typedef int64_t             ImS64;  // 64-bit signed integer (pre C++11)
+typedef uint64_t            ImU64;  // 64-bit unsigned integer (pre C++11)
+#else
+typedef signed   long long  ImS64;  // 64-bit signed integer (post C++11)
+typedef unsigned long long  ImU64;  // 64-bit unsigned integer (post C++11)
+#endif
+
 // Forward declarations
 struct ImDrawChannel;               // Temporary storage to output draw commands out of order, used by ImDrawListSplitter and ImDrawList::ChannelsSplit()
 struct ImDrawCmd;                   // A single draw command within a parent ImDrawList (generally maps to 1 GPU draw call, unless it is a callback)
@@ -179,7 +198,7 @@ typedef int ImGuiTableFlags;        // -> enum ImGuiTableFlags_      // Flags: F
 typedef int ImGuiTableColumnFlags;  // -> enum ImGuiTableColumnFlags_// Flags: For TableSetupColumn()
 typedef int ImGuiTableRowFlags;     // -> enum ImGuiTableRowFlags_   // Flags: For TableNextRow()
 typedef int ImGuiTreeNodeFlags;     // -> enum ImGuiTreeNodeFlags_   // Flags: for TreeNode(), TreeNodeEx(), CollapsingHeader()
-typedef int ImGuiWindowFlags;       // -> enum ImGuiWindowFlags_     // Flags: for Begin(), BeginChild()
+typedef ImS64 ImGuiWindowFlags;     // -> enum ImGuiWindowFlags_     // Flags: for Begin(), BeginChild()
 
 // Other types
 #ifndef ImTextureID                 // ImTextureID [configurable type: override in imconfig.h with '#define ImTextureID xxx']
@@ -197,25 +216,6 @@ typedef unsigned int ImWchar32;     // A single decoded U32 character/code point
 typedef ImWchar32 ImWchar;
 #else
 typedef ImWchar16 ImWchar;
-#endif
-
-// Basic scalar data types
-typedef signed char         ImS8;   // 8-bit signed integer
-typedef unsigned char       ImU8;   // 8-bit unsigned integer
-typedef signed short        ImS16;  // 16-bit signed integer
-typedef unsigned short      ImU16;  // 16-bit unsigned integer
-typedef signed int          ImS32;  // 32-bit signed integer == int
-typedef unsigned int        ImU32;  // 32-bit unsigned integer (often used to store packed colors)
-#if defined(_MSC_VER) && !defined(__clang__)
-typedef signed   __int64    ImS64;  // 64-bit signed integer (pre and post C++11 with Visual Studio)
-typedef unsigned __int64    ImU64;  // 64-bit unsigned integer (pre and post C++11 with Visual Studio)
-#elif (defined(__clang__) || defined(__GNUC__)) && (__cplusplus < 201100)
-#include <stdint.h>
-typedef int64_t             ImS64;  // 64-bit signed integer (pre C++11)
-typedef uint64_t            ImU64;  // 64-bit unsigned integer (pre C++11)
-#else
-typedef signed   long long  ImS64;  // 64-bit signed integer (post C++11)
-typedef unsigned long long  ImU64;  // 64-bit unsigned integer (post C++11)
 #endif
 
 // 2D vector (often used to store positions or sizes)
@@ -862,10 +862,10 @@ namespace ImGui
 //-----------------------------------------------------------------------------
 
 // Flags for ImGui::Begin()
-enum ImGuiWindowFlags_
+enum ImGuiWindowFlags_ : ImS64
 {
     ImGuiWindowFlags_None                   = 0,
-    ImGuiWindowFlags_NoTitleBar             = 1 << 0,   // Disable title-bar
+    ImGuiWindowFlags_NoTitleBar             = 1LL << 60,// Disable title-bar
     ImGuiWindowFlags_NoResize               = 1 << 1,   // Disable user resizing with the lower-right grip
     ImGuiWindowFlags_NoMove                 = 1 << 2,   // Disable user moving the window
     ImGuiWindowFlags_NoScrollbar            = 1 << 3,   // Disable scrollbars (window can still scroll with mouse or programmatically)
